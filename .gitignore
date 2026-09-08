@@ -1,16 +1,25 @@
-node_modules/
-client/node_modules/
-server/node_modules/
+# Node dependencies
+**/node_modules/
 
+# Frontend build
+client/dist/
+**/dist/
+
+# Environment files
 .env
-.env.local
-.env.production
-client/.env
-server/.env
+**/.env
+.env.*
+**/.env.*
 
-dist/
-build/
-.next/
+# Keep example env if needed
+!.env.example
+!**/.env.example
 
-.DS_Store
-Thumbs.db
+# SQLite database
+server/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
