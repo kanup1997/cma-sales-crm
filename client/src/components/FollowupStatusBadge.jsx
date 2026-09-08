@@ -1,0 +1,1 @@
+export default function FollowupStatusBadge({status,label}){if(!status)return <span className="followup-status-pill empty-pill">Not set</span>;return <span className={`followup-status-pill followup-${status.toLowerCase().replaceAll('_','-')}`}>{label||status.replaceAll('_',' ')}</span>;}

@@ -1,0 +1,16 @@
+node_modules/
+client/node_modules/
+server/node_modules/
+
+.env
+.env.local
+.env.production
+client/.env
+server/.env
+
+dist/
+build/
+.next/
+
+.DS_Store
+Thumbs.db
