@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import * as XLSX from 'xlsx';
-import db from '../db.js';
+import {db,queryAll,run} from '../db.js';
 import {normalizeEmail,normalizeHeader,normalizePhone,normalizeQuantityRange,parseAmount,parseQuantity} from './leadData.js';
 import {notifyLeadAssigned} from './leadNotifications.js';
 
@@ -67,41 +67,38 @@ export async function syncIntegration(integration,triggerType='MANUAL'){
   try{
     const sheet=await readSheet(integration);found=sheet.rows.length;const saved=JSON.parse(integration.mapping_json||'{}');const mapping=resolveMapping(sheet.headers,saved);
     if(!mapping.contactName&&!mapping.phone&&!mapping.email)throw new Error('Map at least Name, Phone or Email before syncing');
-    const insertLead=db.prepare(`INSERT INTO leads(company_name,contact_name,phone,email,city,source,requirement,box_size,quantity,quantity_range,per_box_budget,estimated_value,status,assigned_to,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const insertLead=await db.prepare(`INSERT INTO leads(company_name,contact_name,phone,email,city,source,requirement,box_size,quantity,quantity_range,per_box_budget,estimated_value,status,assigned_to,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     let assignmentCursor=Math.max(0,Number(integration.assignment_cursor)||0);let rotationIds=[];
-    if(integration.assignment_mode==='ROUND_ROBIN'){let selected=[];try{selected=JSON.parse(integration.assignment_user_ids_json||'[]').map(Number);}catch{}const active=new Set(db.prepare('SELECT id FROM users WHERE active=1').all().map(user=>user.id));rotationIds=selected.filter(id=>active.has(id));}
+    if(integration.assignment_mode==='ROUND_ROBIN'){let selected=[];try{selected=JSON.parse(integration.assignment_user_ids_json||'[]').map(Number);}catch{}const active=new Set((await queryAll('SELECT id FROM users WHERE active=1')).map(user=>Number(user.id)));rotationIds=selected.filter(id=>active.has(id));}
     const leadsPerUser=Math.max(1,Number(integration.leads_per_user)||1);
     const nextOwner=()=>rotationIds.length?rotationIds[Math.floor(assignmentCursor/leadsPerUser)%rotationIds.length]:(integration.assigned_to||null);
-    const advanceAssignment=db.prepare('UPDATE sheet_integrations SET assignment_cursor=assignment_cursor+1 WHERE id=?');
-    const hasRow=db.prepare('SELECT * FROM sheet_imported_rows WHERE integration_id=? AND row_key=? ORDER BY id LIMIT 1');
-    const trackedByPosition=db.prepare('SELECT r.*,l.contact_name,l.company_name FROM sheet_imported_rows r LEFT JOIN leads l ON l.id=r.lead_id WHERE r.integration_id=? AND r.row_number=? AND r.lead_id IS NOT NULL ORDER BY r.id DESC LIMIT 1');
-    const trackedByLead=db.prepare('SELECT * FROM sheet_imported_rows WHERE integration_id=? AND lead_id=? ORDER BY id DESC LIMIT 1');
-    const existingLead=db.prepare("SELECT id FROM leads WHERE (?<>'' AND lower(email)=lower(?)) OR (?<>'' AND REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'+','')=REPLACE(REPLACE(REPLACE(?,' ',''),'-',''),'+','')) OR (?<>'' AND lower(contact_name)=lower(?) AND (?='' OR lower(COALESCE(company_name,''))=lower(?))) ORDER BY id LIMIT 1");
-    const remember=db.prepare('INSERT INTO sheet_imported_rows(integration_id,row_key,row_number,lead_id) VALUES(?,?,?,?)');
-    const updateLead=db.prepare(`UPDATE leads SET company_name=?,contact_name=?,phone=?,email=?,city=?,source=?,requirement=?,box_size=?,quantity=?,quantity_range=?,per_box_budget=?,estimated_value=?,updated_at=datetime('now') WHERE id=?`);
-    const updateTracking=db.prepare('UPDATE sheet_imported_rows SET row_key=?,row_number=?,lead_id=COALESCE(?,lead_id) WHERE id=?');
-    const moveTracking=db.prepare('UPDATE sheet_imported_rows SET row_number=? WHERE id=?');
-    const importRow=db.transaction(row=>{
+    const advanceAssignment=await db.prepare('UPDATE sheet_integrations SET assignment_cursor=assignment_cursor+1 WHERE id=?');
+    const hasRow=await db.prepare('SELECT * FROM sheet_imported_rows WHERE integration_id=? AND row_key=? ORDER BY id LIMIT 1');
+    const trackedByPosition=await db.prepare('SELECT r.*,l.contact_name,l.company_name FROM sheet_imported_rows r LEFT JOIN leads l ON l.id=r.lead_id WHERE r.integration_id=? AND r.row_number=? AND r.lead_id IS NOT NULL ORDER BY r.id DESC LIMIT 1');
+    const trackedByLead=await db.prepare('SELECT * FROM sheet_imported_rows WHERE integration_id=? AND lead_id=? ORDER BY id DESC LIMIT 1');
+    const existingLead=await db.prepare("SELECT id FROM leads WHERE (?<>'' AND lower(email)=lower(?)) OR (?<>'' AND REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'+','')=REPLACE(REPLACE(REPLACE(?,' ',''),'-',''),'+','')) OR (?<>'' AND lower(contact_name)=lower(?) AND (?='' OR lower(COALESCE(company_name,''))=lower(?))) ORDER BY id LIMIT 1");
+    const remember=await db.prepare('INSERT INTO sheet_imported_rows(integration_id,row_key,row_number,lead_id) VALUES(?,?,?,?)');
+    const updateLead=await db.prepare(`UPDATE leads SET company_name=?,contact_name=?,phone=?,email=?,city=?,source=?,requirement=?,box_size=?,quantity=?,quantity_range=?,per_box_budget=?,estimated_value=?,updated_at=datetime('now') WHERE id=?`);
+    const updateTracking=await db.prepare('UPDATE sheet_imported_rows SET row_key=?,row_number=?,lead_id=COALESCE(?,lead_id) WHERE id=?');
+    const moveTracking=await db.prepare('UPDATE sheet_imported_rows SET row_number=? WHERE id=?');
+    const importRow=async row=>{
       const quantityValue=valueFor(row,mapping,'quantity');
       const data={contactName:valueFor(row,mapping,'contactName'),email:normalizeEmail(valueFor(row,mapping,'email')),phone:normalizePhone(valueFor(row,mapping,'phone')),companyName:valueFor(row,mapping,'companyName'),quantity:parseQuantity(quantityValue),quantityRange:normalizeQuantityRange(quantityValue),boxSize:valueFor(row,mapping,'boxSize'),requirement:valueFor(row,mapping,'requirement'),date:valueFor(row,mapping,'date'),city:valueFor(row,mapping,'city'),perBoxBudget:parseAmount(valueFor(row,mapping,'perBoxBudget'))};
       if(!data.contactName&&!data.phone&&!data.email)return'SKIPPED';
-      const key=rowKey(data);const exact=hasRow.get(integration.id,key);if(exact){moveTracking.run(row.rowNumber,exact.id);return'DUPLICATE';}
-      const matched=existingLead.get(data.email,data.email,data.phone,data.phone,data.contactName,data.contactName,data.companyName,data.companyName);
-      if(matched){const tracking=trackedByLead.get(integration.id,matched.id);if(tracking){updateLead.run(data.companyName||null,data.contactName||data.phone||data.email,data.phone||null,data.email||null,data.city||null,integration.default_source||'Google Ads',data.requirement||null,data.boxSize||null,data.quantity,data.quantityRange||null,data.perBoxBudget,data.quantity*data.perBoxBudget,matched.id);updateTracking.run(key,row.rowNumber,matched.id,tracking.id);return'UPDATED';}remember.run(integration.id,key,row.rowNumber,matched.id);return'DUPLICATE';}
-      const positioned=trackedByPosition.get(integration.id,row.rowNumber);const sameIdentity=positioned&&((data.contactName&&normalize(positioned.contact_name)===normalize(data.contactName))||(data.companyName&&normalize(positioned.company_name)===normalize(data.companyName)));
-      if(sameIdentity){updateLead.run(data.companyName||null,data.contactName||data.phone||data.email,data.phone||null,data.email||null,data.city||null,integration.default_source||'Google Ads',data.requirement||null,data.boxSize||null,data.quantity,data.quantityRange||null,data.perBoxBudget,data.quantity*data.perBoxBudget,positioned.lead_id);updateTracking.run(key,row.rowNumber,positioned.lead_id,positioned.id);return'UPDATED';}
+      const key=rowKey(data);const exact=await hasRow.get([integration.id,key]);if(exact){await moveTracking.run([row.rowNumber,exact.id]);return'DUPLICATE';}
+      const matched=await existingLead.get([data.email,data.email,data.phone,data.phone,data.contactName,data.contactName,data.companyName,data.companyName]);
+      if(matched){const tracking=await trackedByLead.get([integration.id,matched.id]);if(tracking){await updateLead.run([data.companyName||null,data.contactName||data.phone||data.email,data.phone||null,data.email||null,data.city||null,integration.default_source||'Google Ads',data.requirement||null,data.boxSize||null,data.quantity,data.quantityRange||null,data.perBoxBudget,data.quantity*data.perBoxBudget,matched.id]);await updateTracking.run([key,row.rowNumber,matched.id,tracking.id]);return'UPDATED';}await remember.run([integration.id,key,row.rowNumber,matched.id]);return'DUPLICATE';}
+      const positioned=await trackedByPosition.get([integration.id,row.rowNumber]);const sameIdentity=positioned&&((data.contactName&&normalize(positioned.contact_name)===normalize(data.contactName))||(data.companyName&&normalize(positioned.company_name)===normalize(data.companyName)));
+      if(sameIdentity){await updateLead.run([data.companyName||null,data.contactName||data.phone||data.email,data.phone||null,data.email||null,data.city||null,integration.default_source||'Google Ads',data.requirement||null,data.boxSize||null,data.quantity,data.quantityRange||null,data.perBoxBudget,data.quantity*data.perBoxBudget,positioned.lead_id]);await updateTracking.run([key,row.rowNumber,positioned.lead_id,positioned.id]);return'UPDATED';}
       const createdAt=leadDate(data.date);const owner=nextOwner();
-      const result=insertLead.run(data.companyName||null,data.contactName||data.phone||data.email,data.phone||null,data.email||null,data.city||null,integration.default_source||'Google Ads',data.requirement||null,data.boxSize||null,data.quantity,data.quantityRange||null,data.perBoxBudget,data.quantity*data.perBoxBudget,'NEW_LEAD',owner,data.date?`Google Sheet lead date: ${data.date}`:null,null,createdAt,createdAt);
-      remember.run(integration.id,key,row.rowNumber,result.lastInsertRowid);
-      if(owner)notifyLeadAssigned(owner,result.lastInsertRowid,`sheet:${integration.id}:row:${row.rowNumber}:lead:${result.lastInsertRowid}:user:${owner}`);
-      if(rotationIds.length){advanceAssignment.run(integration.id);assignmentCursor++;}return'IMPORTED';
-    });
-    for(const row of sheet.rows){const result=importRow(row);if(result==='IMPORTED')imported++;else if(result==='UPDATED')updated++;else if(result==='DUPLICATE')duplicates++;else skipped++;}
-    db.prepare("UPDATE sheet_integrations SET mapping_json=?,last_sync_at=?,last_success_at=?,last_error=NULL,updated_at=datetime('now') WHERE id=?").run(JSON.stringify(mapping),started,started,integration.id);
-    db.prepare('INSERT INTO sheet_sync_logs(integration_id,trigger_type,status,rows_found,imported_count,updated_count,duplicate_count,skipped_count) VALUES(?,?,?,?,?,?,?,?)').run(integration.id,triggerType,'SUCCESS',found,imported,updated,duplicates,skipped);
+      const result=await insertLead.run([data.companyName||null,data.contactName||data.phone||data.email,data.phone||null,data.email||null,data.city||null,integration.default_source||'Google Ads',data.requirement||null,data.boxSize||null,data.quantity,data.quantityRange||null,data.perBoxBudget,data.quantity*data.perBoxBudget,'NEW_LEAD',owner,data.date?`Google Sheet lead date: ${data.date}`:null,null,createdAt,createdAt]);
+      await remember.run([integration.id,key,row.rowNumber,result.lastInsertRowid]);if(owner)await notifyLeadAssigned(owner,result.lastInsertRowid,`sheet:${integration.id}:row:${row.rowNumber}:lead:${result.lastInsertRowid}:user:${owner}`);if(rotationIds.length){await advanceAssignment.run([integration.id]);assignmentCursor++;}return'IMPORTED';
+    };
+    for(const row of sheet.rows){const result=await importRow(row);if(result==='IMPORTED')imported++;else if(result==='UPDATED')updated++;else if(result==='DUPLICATE')duplicates++;else skipped++;}
+    await run("UPDATE sheet_integrations SET mapping_json=?,last_sync_at=?,last_success_at=?,last_error=NULL,updated_at=datetime('now') WHERE id=?",[JSON.stringify(mapping),started,started,integration.id]);await run('INSERT INTO sheet_sync_logs(integration_id,trigger_type,status,rows_found,imported_count,updated_count,duplicate_count,skipped_count) VALUES(?,?,?,?,?,?,?,?)',[integration.id,triggerType,'SUCCESS',found,imported,updated,duplicates,skipped]);
     return{status:'SUCCESS',rowsFound:found,imported,updated,duplicates,skipped,mapping,headers:sheet.headers};
-  }catch(error){const message=String(error.message||error).slice(0,500);db.prepare("UPDATE sheet_integrations SET last_sync_at=?,last_error=?,updated_at=datetime('now') WHERE id=?").run(started,message,integration.id);db.prepare('INSERT INTO sheet_sync_logs(integration_id,trigger_type,status,rows_found,imported_count,updated_count,duplicate_count,skipped_count,error_message) VALUES(?,?,?,?,?,?,?,?,?)').run(integration.id,triggerType,'FAILED',found,imported,updated,duplicates,skipped,message);throw error;}
+  }catch(error){const message=String(error.message||error).slice(0,500);await run("UPDATE sheet_integrations SET last_sync_at=?,last_error=?,updated_at=datetime('now') WHERE id=?",[started,message,integration.id]);await run('INSERT INTO sheet_sync_logs(integration_id,trigger_type,status,rows_found,imported_count,updated_count,duplicate_count,skipped_count,error_message) VALUES(?,?,?,?,?,?,?,?,?)',[integration.id,triggerType,'FAILED',found,imported,updated,duplicates,skipped,message]);throw error;}
 }
 
 let running=false;
-export function startSheetScheduler(){setInterval(async()=>{if(running)return;running=true;try{const due=db.prepare("SELECT * FROM sheet_integrations WHERE enabled=1 AND (last_sync_at IS NULL OR datetime(last_sync_at, '+' || interval_minutes || ' minutes') <= datetime('now'))").all();for(const integration of due){try{await syncIntegration(integration,'AUTO');}catch(error){console.error(`Sheet sync ${integration.id} failed:`,error.message);}}}finally{running=false;}},60_000).unref();}
+export function startSheetScheduler(){setInterval(async()=>{if(running)return;running=true;try{const due=await queryAll("SELECT * FROM sheet_integrations WHERE enabled=1 AND (last_sync_at IS NULL OR datetime(last_sync_at, '+' || interval_minutes || ' minutes') <= datetime('now'))");for(const integration of due){try{await syncIntegration(integration,'AUTO');}catch(error){console.error(`Sheet sync ${integration.id} failed:`,error.message);}}}catch(error){console.error('Sheet scheduler check failed:',error.message);}finally{running=false;}},60_000).unref();}

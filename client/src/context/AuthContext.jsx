@@ -32,7 +32,8 @@ export function AuthProvider({ children }) {
   }
   async function updateProfile(values){const data=await api('/auth/profile',{method:'PATCH',body:JSON.stringify(values)});setUser(data.user);return data.user;}
 
-  const can=permission=>!!user&&(user.role==='ADMIN'||user.permissions?.includes(permission));
+  const legacy={PAGE_NOT_INTERESTED:'PAGE_LEADS',PAGE_DAILY_WORK:'PAGE_REPORTS',PAGE_PURCHASE_ORDERS:'PAGE_ORDERS',PAGE_TAX_INVOICES:'PAGE_ORDERS'};
+  const can=permission=>!!user&&(user.role==='ADMIN'||user.permissions?.includes(permission)||(legacy[permission]&&user.permissions?.includes(legacy[permission])));
   const value = useMemo(() => ({ user, loading, login, logout, updateProfile, can }), [user, loading]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

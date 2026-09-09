@@ -22,4 +22,4 @@ server/data/
 *.db-wal
 
 # Logs
-*.log
+*.logserver/inspect-assignment.mjs

@@ -1,75 +1,90 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import db from '../db.js';
+import { db, queryAll, queryOne } from '../db.js';
 import { adminOnly, authRequired } from '../middleware/auth.js';
-import {PERMISSIONS,SALES_DEFAULTS} from '../permissions.js';
+import { PERMISSIONS, SALES_DEFAULTS } from '../permissions.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = Router();
-router.use(authRequired, adminOnly);
+router.use(authRequired);
 
-router.get('/', (req, res) => {
-  const users = db.prepare(`
-    SELECT u.id, u.name, u.email, u.phone, u.designation, u.city, u.bio, u.role, u.active, u.created_at,
-           COUNT(l.id) AS lead_count
-    FROM users u
-    LEFT JOIN leads l ON l.assigned_to = u.id
-    GROUP BY u.id
-    ORDER BY u.active DESC, u.name ASC
-  `).all();
-  const permissionRows=db.prepare('SELECT user_id,permission FROM user_permissions').all();const permissionMap={};permissionRows.forEach(row=>(permissionMap[row.user_id]??=[]).push(row.permission));
-  res.json({ users:users.map(user=>({...user,permissions:user.role==='ADMIN'?[...PERMISSIONS]:(permissionMap[user.id]||[])})),availablePermissions:PERMISSIONS });
-});
+function cleanPermissions(value) {
+  return [...new Set((Array.isArray(value) ? value : []).filter(item => PERMISSIONS.includes(item)))];
+}
 
-router.post('/', (req, res) => {
-  const { name, email, password, role = 'SALES', phone='', designation='', city='', bio='', active=true, permissions } = req.body || {};
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'Name, email and password are required' });
+async function getUsers() {
+  const users = await queryAll(`SELECT u.id,u.name,u.email,u.phone,u.designation,u.city,u.bio,u.role,u.active,u.created_at,COUNT(l.id) lead_count FROM users u LEFT JOIN leads l ON l.assigned_to=u.id GROUP BY u.id ORDER BY u.active DESC,u.name`);
+  const rows = await queryAll('SELECT user_id,permission FROM user_permissions ORDER BY permission');
+  const map = {};
+  for (const row of rows) (map[row.user_id] ??= []).push(row.permission);
+  return users.map(user => ({ ...user, id:Number(user.id), lead_count:Number(user.lead_count||0), permissions:user.role==='ADMIN'?[...PERMISSIONS]:(map[user.id]||[]) }));
+}
+
+router.get('/', asyncHandler(async (req, res) => {
+  if (req.user.role !== 'ADMIN') {
+    const users = await queryAll("SELECT id,name,role,active FROM users WHERE active=1 ORDER BY name");
+    return res.json({users:users.map(user=>({...user,id:Number(user.id)}))});
   }
-  if (!['ADMIN', 'SALES'].includes(role)) {
-    return res.status(400).json({ message: 'Invalid role' });
-  }
+  res.json({ users:await getUsers(), availablePermissions:PERMISSIONS });
+}));
 
+router.post('/', adminOnly, asyncHandler(async (req, res) => {
+  const {name,email,password,role='SALES',phone='',designation='',city='',bio='',active=true,permissions}=req.body||{};
+  if (!name || !email || !password) return res.status(400).json({message:'Name, email and password are required'});
+  if (!['ADMIN','SALES'].includes(role)) return res.status(400).json({message:'Invalid role'});
   try {
-    const create=db.transaction(()=>{const result = db.prepare(`
-      INSERT INTO users (name, email, password_hash, role, phone, designation, city, bio, active, permissions_configured)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    `).run(name.trim(), email.trim().toLowerCase(), bcrypt.hashSync(password, 10), role, phone.trim()||null, designation.trim()||null, city.trim()||null, bio.trim()||null, active?1:0);const selected=role==='ADMIN'?[]:(Array.isArray(permissions)?permissions:SALES_DEFAULTS).filter(value=>PERMISSIONS.includes(value));const insert=db.prepare('INSERT INTO user_permissions(user_id,permission) VALUES(?,?)');selected.forEach(permission=>insert.run(result.lastInsertRowid,permission));return result;});const result=create();
-
-    const user = db.prepare(`
-      SELECT id, name, email, phone, designation, city, bio, role, active, created_at
-      FROM users WHERE id = ?
-    `).get(result.lastInsertRowid);
-    res.status(201).json({ user });
+    const created = await queryOne(`INSERT INTO users(name,email,password_hash,role,phone,designation,city,bio,active,permissions_configured) VALUES(?,?,?,?,?,?,?,?,?,1) RETURNING id`,[name.trim(),email.trim().toLowerCase(),bcrypt.hashSync(password,10),role,phone.trim()||null,designation.trim()||null,city.trim()||null,bio.trim()||null,active?1:0]);
+    const selected = role==='ADMIN' ? [] : (Array.isArray(permissions) ? cleanPermissions(permissions) : SALES_DEFAULTS);
+    if (selected.length) await db.batch(selected.map(permission => ({sql:'INSERT INTO user_permissions(user_id,permission) VALUES(?,?)',args:[created.id,permission]})),'immediate');
+    res.status(201).json({message:'User created',permissions:selected});
   } catch (error) {
-    if (String(error.message).includes('UNIQUE')) {
-      return res.status(409).json({ message: 'A user with this email already exists' });
-    }
+    if (String(error.message).includes('UNIQUE')) return res.status(409).json({message:'A user with this email already exists'});
     throw error;
   }
-});
+}));
 
-router.patch('/:id', (req, res) => {
+router.patch('/:id', adminOnly, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
-  if (!user) return res.status(404).json({ message: 'User not found' });
-
-  const { name, email, phone, designation, city, bio, role, active, password, permissions } = req.body || {};
-  const updates = [];
-  const params = [];
-
-  if (name !== undefined) { updates.push('name = ?'); params.push(String(name).trim()); }
-  if (email !== undefined) { if(!String(email).trim())return res.status(400).json({message:'Email is required'});updates.push('email = ?');params.push(String(email).trim().toLowerCase()); }
-  [['phone',phone],['designation',designation],['city',city],['bio',bio]].forEach(([column,value])=>{if(value!==undefined){updates.push(`${column} = ?`);params.push(String(value).trim()||null);}});
-  if (role !== undefined) {
-    if (!['ADMIN', 'SALES'].includes(role)) return res.status(400).json({ message: 'Invalid role' });
-    updates.push('role = ?'); params.push(role);
+  const existing = await queryOne('SELECT id,role FROM users WHERE id=?',[id]);
+  if (!existing) return res.status(404).json({message:'User not found'});
+  const {name,email,phone,designation,city,bio,role,active,password,permissions}=req.body||{};
+  const updates=[];
+  const params=[];
+  if (name!==undefined) { updates.push('name=?'); params.push(String(name).trim()); }
+  if (email!==undefined) {
+    if (!String(email).trim()) return res.status(400).json({message:'Email is required'});
+    updates.push('email=?'); params.push(String(email).trim().toLowerCase());
   }
-  if (active !== undefined) { updates.push('active = ?'); params.push(active ? 1 : 0); }
-  if (password) { updates.push('password_hash = ?'); params.push(bcrypt.hashSync(password, 10)); }
-
-  if (!updates.length && !Array.isArray(permissions)) return res.status(400).json({ message: 'Nothing to update' });
-  const save=db.transaction(()=>{if(updates.length){params.push(id);db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);}if(Array.isArray(permissions)){db.prepare('DELETE FROM user_permissions WHERE user_id=?').run(id);const insert=db.prepare('INSERT INTO user_permissions(user_id,permission) VALUES(?,?)');[...new Set(permissions.filter(value=>PERMISSIONS.includes(value)))].forEach(permission=>insert.run(id,permission));db.prepare('UPDATE users SET permissions_configured=1 WHERE id=?').run(id);}});try{save();}catch(error){if(String(error.message).includes('UNIQUE'))return res.status(409).json({message:'A user with this email already exists'});throw error;}
-  res.json({ message: 'User updated' });
-});
+  for (const [column,value] of [['phone',phone],['designation',designation],['city',city],['bio',bio]]) {
+    if (value!==undefined) { updates.push(`${column}=?`); params.push(String(value).trim()||null); }
+  }
+  if (role!==undefined) {
+    if (!['ADMIN','SALES'].includes(role)) return res.status(400).json({message:'Invalid role'});
+    updates.push('role=?'); params.push(role);
+  }
+  if (active!==undefined) { updates.push('active=?'); params.push(active?1:0); }
+  if (password) { updates.push('password_hash=?'); params.push(bcrypt.hashSync(password,10)); }
+  const selected = cleanPermissions(permissions);
+  const finalRole = role || existing.role;
+  try {
+    const batch=[];
+    if (updates.length) batch.push({sql:`UPDATE users SET ${updates.join(',')} WHERE id=?`,args:[...params,id]});
+    if (Array.isArray(permissions)) {
+      batch.push({sql:'DELETE FROM user_permissions WHERE user_id=?',args:[id]});
+      if (finalRole!=='ADMIN') {
+        for (const permission of selected) batch.push({sql:'INSERT INTO user_permissions(user_id,permission) VALUES(?,?)',args:[id,permission]});
+      }
+      batch.push({sql:'UPDATE users SET permissions_configured=1 WHERE id=?',args:[id]});
+    }
+    if (!batch.length) return res.status(400).json({message:'Nothing to update'});
+    await db.batch(batch,'immediate');
+    const saved=(await queryAll('SELECT permission FROM user_permissions WHERE user_id=? ORDER BY permission',[id])).map(row=>row.permission);
+    if (finalRole!=='ADMIN' && Array.isArray(permissions) && saved.length!==selected.length) throw new Error('Permission verification failed after save');
+    res.json({message:'User and access permissions updated',permissions:finalRole==='ADMIN'?[...PERMISSIONS]:saved});
+  } catch (error) {
+    if (String(error.message).includes('UNIQUE')) return res.status(409).json({message:'A user with this email already exists'});
+    throw error;
+  }
+}));
 
 export default router;

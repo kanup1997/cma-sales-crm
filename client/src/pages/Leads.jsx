@@ -10,6 +10,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import {SortableTh,useSortedRows} from '../components/SortableTable';
 import FollowupStatusBadge from '../components/FollowupStatusBadge';
 import {FOLLOWUP_STATUS_FALLBACK} from '../data/statusOptions';
+import Pagination,{LoadingOverlay,emptyPagination} from '../components/Pagination';
 
 const defaultForm = { companyName:'', contactName:'', phone:'', email:'', city:'', source:'', status:'NEW_LEAD', requirement:'', boxSize:'', quantity:'', perBoxBudget:'', estimatedValue:'', nextFollowupAt:'' };
 function toIsoLocal(v) { return v ? new Date(v).toISOString() : null; }
@@ -26,14 +27,17 @@ export default function Leads() {
   const [advanced,setAdvanced]=useState({city:'',source:'',boxSize:'',minQuantity:'',maxQuantity:'',minBudget:'',maxBudget:'',followupFrom:'',followupTo:''}); const [showFilters,setShowFilters]=useState(false); const [exporting,setExporting]=useState(false);
   const [selected, setSelected] = useState([]); const [bulkUser, setBulkUser] = useState('');
   const [showAdd, setShowAdd] = useState(false); const [form, setForm] = useState(defaultForm); const [error, setError] = useState('');
+  const [pagination,setPagination]=useState(emptyPagination); const [loading,setLoading]=useState(true);
 
   async function load() {
     const params = buildParams();
-    try { const d = await api(`/leads?${params}`); setLeads(d.leads); setStatuses(d.statuses); }
-    catch(e){ setError(e.message); }
+    params.set('page',pagination.page);params.set('pageSize',pagination.pageSize);setLoading(true);
+    try { const d = await api(`/leads?${params}`); setLeads(d.leads); setStatuses(d.statuses);setPagination(d.pagination||emptyPagination);setError(''); }
+    catch(e){ setError(e.message); }finally{setLoading(false);}
   }
-  useEffect(() => { const t=setTimeout(load,250); return()=>clearTimeout(t); }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter]);
-  useEffect(() => { if(user.role==='ADMIN') api('/users').then(d=>setUsers(d.users)).catch(()=>{}); },[user.role]);
+  useEffect(() => { setPagination(value=>({...value,page:1})); }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter]);
+  useEffect(() => { const t=setTimeout(load,250); return()=>clearTimeout(t); }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter,pagination.page,pagination.pageSize]);
+  useEffect(() => { if(user.role==='ADMIN') api('/users?all=1').then(d=>setUsers(d.users)).catch(()=>{}); },[user.role]);
 
   const allSelected = useMemo(() => leads.length && leads.every(l=>selected.includes(l.id)),[leads,selected]);
   const sortedLeadRows=useSortedRows(leads,'created_at','desc');const leadSort={...sortedLeadRows,rows:[...sortedLeadRows.rows].sort((a,b)=>Number(b.status==='NEW_LEAD')-Number(a.status==='NEW_LEAD'))};
@@ -67,7 +71,8 @@ export default function Leads() {
       <div className="span-3 inline-actions form-actions"><button className="btn btn-primary">Save Lead</button><button type="button" className="btn btn-ghost" onClick={()=>setShowAdd(false)}>Cancel</button></div>
     </form></section>}
 
-    <section className="panel">
+    <section className="panel paginated-panel">
+      <LoadingOverlay show={loading}/>
       <div className="filters">
         <input placeholder="Search name, company, phone, requirement..." value={q} onChange={e=>setQ(e.target.value)}/>
         <SearchableSelect value={status} onChange={setStatus} placeholder="All lead statuses" options={statuses.filter(s=>s!=='NOT_INTERESTED').map(s=>({value:s,label:masterOptions.LEAD_STATUS?.find(x=>x.code===s)?.label||s.replaceAll('_',' ')}))}/>
@@ -83,6 +88,7 @@ export default function Leads() {
         <td>{l.phone||l.email||'-'}<span className="cell-sub">{l.city||''}</span></td><td><strong className="order-detail">{l.box_size||'Size not set'} · Qty: {l.quantity_range||Number(l.quantity||0).toLocaleString('en-IN')}</strong><span className="cell-sub">₹{Number(l.per_box_budget||0).toLocaleString('en-IN')} per box · {l.requirement||'No requirement'}</span></td><td>{fmt(l.next_followup_at)}</td>
         {user.role==='ADMIN'&&<td>{l.assigned_name||<span className="danger-text">Unassigned</span>}</td>}<td><StatusBadge status={l.status}/></td><td><FollowupStatusBadge status={l.latest_followup_status} label={masterOptions.FOLLOWUP_STATUS?.find(x=>x.code===l.latest_followup_status)?.label}/></td><td><div className="row-actions"><LeadActions phone={l.phone} compact/>{can('ACTION_LEADS_DELETE')&&<button className="delete-lead-btn" title="Delete lead" onClick={()=>deleteLead(l)}><Trash2 size={14}/></button>}</div></td><td><span className="cell-sub" title={l.latest_followup_note||''}>{l.latest_followup_note||'-'}</span></td><td className="date-cell">{fmt(l.created_at)}</td><td className="date-cell">{fmt(l.updated_at)}</td></tr>)}</tbody></table></div>
       {!leads.length&&<div className="empty">No leads found.</div>}
+      <Pagination value={pagination} disabled={loading} onChange={next=>{setSelected([]);setPagination(value=>({...value,...next}));}}/>
     </section>
   </>;
 }

@@ -1,14 +1,18 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
 
 export async function api(path, options = {}) {
+  window.dispatchEvent(new Event('api:start'));
   const token = localStorage.getItem('cma_crm_token');
   const headers = { ...(options.headers || {}) };
   if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let response;
+  try { response = await fetch(`${API_BASE}${path}`, { ...options, headers }); }
+  catch(error){ window.dispatchEvent(new Event('api:end')); throw error; }
   let data = {};
   try { data = await response.json(); } catch { data = {}; }
+  window.dispatchEvent(new Event('api:end'));
   if (!response.ok) throw new Error(data.message || 'Request failed');
   const method = String(options.method || 'GET').toUpperCase();
   if (method !== 'GET' && path !== '/auth/login' && !options.silent) {

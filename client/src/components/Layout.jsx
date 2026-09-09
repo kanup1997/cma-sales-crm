@@ -34,18 +34,18 @@ export default function Layout() {
           <div className="nav-label">Workspace</div>
           {can('PAGE_DASHBOARD')&&<NavLink title="Dashboard" to="/" end className={navClass} onClick={close}><LayoutDashboard size={18}/><span>Dashboard</span></NavLink>}
           {can('PAGE_LEADS')&&<NavLink title="Leads" to="/leads" className={navClass} onClick={close}><Users size={18}/><span>Leads</span></NavLink>}
-          {can('PAGE_LEADS')&&<NavLink title="Not Interested Leads" to="/not-interested-leads" className={navClass} onClick={close}><UserX size={18}/><span>Not Interested</span></NavLink>}
+          {can('PAGE_NOT_INTERESTED')&&<NavLink title="Not Interested Leads" to="/not-interested-leads" className={navClass} onClick={close}><UserX size={18}/><span>Not Interested</span></NavLink>}
           {can('PAGE_FOLLOWUPS')&&<NavLink title="Follow-ups" to="/followups" className={navClass} onClick={close}><CalendarClock size={18}/><span>Follow-ups</span></NavLink>}
           {can('PAGE_REPORTS')&&<NavLink title="Order Reports" to="/reports" className={navClass} onClick={close}><ChartNoAxesCombined size={18}/><span>Order Reports</span></NavLink>}
-          {can('PAGE_REPORTS')&&<NavLink title="Daily Work Report" to="/daily-work-report" className={navClass} onClick={close}><ClipboardList size={18}/><span>Daily Work</span></NavLink>}
-          {can('PAGE_ORDERS')&&<NavLink title="Purchase Orders" to="/purchase-orders" className={navClass} onClick={close}><ReceiptIndianRupee size={18}/><span>Purchase Orders</span></NavLink>}
-          {can('PAGE_ORDERS')&&<NavLink title="Tax Invoices" to="/tax-invoices" className={navClass} onClick={close}><ReceiptIndianRupee size={18}/><span>Tax Invoices</span></NavLink>}
+          {can('PAGE_DAILY_WORK')&&<NavLink title="Daily Work Report" to="/daily-work-report" className={navClass} onClick={close}><ClipboardList size={18}/><span>Daily Work</span></NavLink>}
+          {can('PAGE_PURCHASE_ORDERS')&&<NavLink title="Purchase Orders" to="/purchase-orders" className={navClass} onClick={close}><ReceiptIndianRupee size={18}/><span>Purchase Orders</span></NavLink>}
+          {can('PAGE_TAX_INVOICES')&&<NavLink title="Tax Invoices" to="/tax-invoices" className={navClass} onClick={close}><ReceiptIndianRupee size={18}/><span>Tax Invoices</span></NavLink>}
           <NavLink title="My Profile" to="/profile" className={navClass} onClick={close}><CircleUserRound size={18}/><span>My Profile</span></NavLink>
-          {user.role === 'ADMIN' && <NavLink title="Import Leads" to="/import" className={navClass} onClick={close}><Upload size={18}/><span>Import Leads</span></NavLink>}
-          {user.role === 'ADMIN' && <NavLink title="Users" to="/users" className={navClass} onClick={close}><UserCog size={18}/><span>Users</span></NavLink>}
-          {user.role === 'ADMIN' && <NavLink title="Masters" to="/masters" className={navClass} onClick={close}><Database size={18}/><span>Masters</span></NavLink>}
-          {user.role === 'ADMIN' && <NavLink title="Integrations" to="/integrations" className={navClass} onClick={close}><PlugZap size={18}/><span>Integrations</span></NavLink>}
-          {user.role === 'ADMIN' && <NavLink title="Data Reset" to="/data-reset" className={navClass} onClick={close}><Trash2 size={18}/><span>Data Reset</span></NavLink>}
+          {can('PAGE_IMPORT') && <NavLink title="Import Leads" to="/import" className={navClass} onClick={close}><Upload size={18}/><span>Import Leads</span></NavLink>}
+          {can('PAGE_USERS') && <NavLink title="Users" to="/users" className={navClass} onClick={close}><UserCog size={18}/><span>Users</span></NavLink>}
+          {can('PAGE_MASTERS') && <NavLink title="Masters" to="/masters" className={navClass} onClick={close}><Database size={18}/><span>Masters</span></NavLink>}
+          {can('PAGE_INTEGRATIONS') && <NavLink title="Integrations" to="/integrations" className={navClass} onClick={close}><PlugZap size={18}/><span>Integrations</span></NavLink>}
+          {can('PAGE_DATA_RESET') && <NavLink title="Data Reset" to="/data-reset" className={navClass} onClick={close}><Trash2 size={18}/><span>Data Reset</span></NavLink>}
         </nav>
 
         <div className="sidebar-user">

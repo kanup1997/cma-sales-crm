@@ -1,9 +1,10 @@
 import {useEffect,useState} from 'react';
 import {api} from '../api';
 import {Pencil,ShieldCheck,UserPlus,X} from 'lucide-react';
+import Pagination,{LoadingOverlay,emptyPagination} from '../components/Pagination';
 
 const groups=[
-  {title:'Page Access',items:[['PAGE_DASHBOARD','Dashboard'],['PAGE_LEADS','Leads'],['PAGE_FOLLOWUPS','Follow-ups'],['PAGE_REPORTS','Order Reports'],['PAGE_ORDERS','PO & Invoices']]},
+  {title:'Page Access',items:[['PAGE_DASHBOARD','Dashboard'],['PAGE_LEADS','Leads'],['PAGE_NOT_INTERESTED','Not Interested Leads'],['PAGE_FOLLOWUPS','Follow-ups'],['PAGE_REPORTS','Order Reports'],['PAGE_DAILY_WORK','Daily Work Report'],['PAGE_PURCHASE_ORDERS','Purchase Orders'],['PAGE_TAX_INVOICES','Tax Invoices'],['PAGE_IMPORT','Import Leads'],['PAGE_USERS','Users & Access'],['PAGE_MASTERS','Masters'],['PAGE_INTEGRATIONS','Integrations'],['PAGE_DATA_RESET','Data Reset']]},
   {title:'Dashboard Sections',items:[['SECTION_DASHBOARD_REVENUE','Revenue & order analytics'],['SECTION_DASHBOARD_FOLLOWUPS',"Today's follow-ups"]]},
   {title:'Lead Actions',items:[['ACTION_LEADS_CREATE','Create leads'],['ACTION_LEADS_EDIT','Edit leads'],['ACTION_LEADS_DELETE','Delete leads'],['ACTION_LEADS_EXPORT','Export leads']]},
   {title:'Follow-up Actions',items:[['ACTION_FOLLOWUPS_MANAGE','Add and update follow-ups']]},
@@ -15,9 +16,9 @@ const defaults=allPermissions.filter(key=>!['ACTION_LEADS_DELETE','SECTION_REPOR
 const blank=()=>({name:'',email:'',phone:'',designation:'',city:'',bio:'',password:'',role:'SALES',active:true,permissions:[...defaults]});
 
 export default function Users(){
-  const [users,setUsers]=useState([]),[modal,setModal]=useState(null),[form,setForm]=useState(blank),[saving,setSaving]=useState(false),[error,setError]=useState('');
-  async function load(){try{const data=await api('/users');setUsers(data.users);}catch(e){setError(e.message);}}
-  useEffect(()=>{load();},[]);
+  const [users,setUsers]=useState([]),[modal,setModal]=useState(null),[form,setForm]=useState(blank),[saving,setSaving]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true),[pagination,setPagination]=useState(emptyPagination);
+  async function load(){setLoading(true);try{const data=await api(`/users?page=${pagination.page}&pageSize=${pagination.pageSize}`);setUsers(data.users);setPagination(data.pagination||emptyPagination);setError('');}catch(e){setError(e.message);}finally{setLoading(false);}}
+  useEffect(()=>{load();},[pagination.page,pagination.pageSize]);
   function openCreate(){setError('');setForm(blank());setModal({mode:'create'});}
   function openEdit(user){setError('');setForm({name:user.name||'',email:user.email||'',phone:user.phone||'',designation:user.designation||'',city:user.city||'',bio:user.bio||'',password:'',role:user.role,active:!!user.active,permissions:user.permissions||[]});setModal({mode:'edit',user});}
   function togglePermission(key){setForm(current=>({...current,permissions:current.permissions.includes(key)?current.permissions.filter(value=>value!==key):[...current.permissions,key]}));}

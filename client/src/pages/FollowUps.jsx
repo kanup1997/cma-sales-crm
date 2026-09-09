@@ -12,8 +12,8 @@ function inputDate(date=new Date()){const local=new Date(date.getTime()-date.get
 function rangeBounds(from,to){const s=new Date(`${from}T00:00:00`);const e=new Date(`${to||from}T00:00:00`);e.setDate(e.getDate()+1);return{start:s.toISOString(),end:e.toISOString()};}
 export default function FollowUps(){
   const {user}=useAuth(); const today=inputDate(); const [tab,setTab]=useState('today'); const [leads,setLeads]=useState([]); const [allLeads,setAllLeads]=useState([]); const [users,setUsers]=useState([]); const [owner,setOwner]=useState(''); const [from,setFrom]=useState(today); const [to,setTo]=useState(today); const [error,setError]=useState('');
-  useEffect(()=>{if(user.role==='ADMIN')api('/users').then(d=>setUsers(d.users)).catch(()=>{});},[user.role]);
-  useEffect(()=>{const p=new URLSearchParams();if(owner)p.set('assignedTo',owner);api(`/leads?${p}`).then(d=>setAllLeads(d.leads)).catch(e=>setError(e.message));},[owner]);
+  useEffect(()=>{if(user.role==='ADMIN')api('/users?all=1').then(d=>setUsers(d.users)).catch(()=>{});},[user.role]);
+  useEffect(()=>{const p=new URLSearchParams({pageSize:'1000'});if(owner)p.set('assignedTo',owner);api(`/leads?${p}`).then(d=>setAllLeads(d.leads)).catch(e=>setError(e.message));},[owner]);
   useEffect(()=>{const dates=tab==='range'?rangeBounds(from,to):bounds();const p=new URLSearchParams({followup:tab,start:dates.start,end:dates.end});if(owner)p.set('assignedTo',owner);setError('');api(`/leads?${p}`).then(d=>setLeads(d.leads)).catch(e=>setError(e.message));},[tab,owner,from,to]);
   const counts=useMemo(()=>{const {start,end}=bounds();const s=new Date(start),e=new Date(end);const active=allLeads.filter(l=>l.next_followup_at&&!['CLOSED_WON','CLOSED_LOST'].includes(l.status));return{total:active.length,today:active.filter(l=>new Date(l.next_followup_at)>=s&&new Date(l.next_followup_at)<e).length,overdue:active.filter(l=>new Date(l.next_followup_at)<s).length,upcoming:active.filter(l=>new Date(l.next_followup_at)>=e).length};},[allLeads]);
   function reset(){setOwner('');setFrom(today);setTo(today);setTab('today');}
