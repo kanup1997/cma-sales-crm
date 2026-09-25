@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Upload, UserCog, CalendarClock, LogOut, Menu, X, Bell, PanelLeftClose, PanelLeftOpen, ChartNoAxesCombined, CircleUserRound, ReceiptIndianRupee, Database, PlugZap, Trash2, UserX, ClipboardList } from 'lucide-react';
+import { LayoutDashboard, Users, Upload, UserCog, CalendarClock, LogOut, Menu, X, Bell, RefreshCw, PanelLeftClose, PanelLeftOpen, ChartNoAxesCombined, CircleUserRound, ReceiptIndianRupee, Database, PlugZap, Trash2, UserX, ClipboardList } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
 
@@ -11,13 +11,37 @@ export default function Layout() {
   const navigate=useNavigate();const location=useLocation();
   const [open, setOpen] = useState(false);
   const [noticeOpen,setNoticeOpen]=useState(false);const [notifications,setNotifications]=useState([]);const [unreadCount,setUnreadCount]=useState(0);
+  const [fetchingLeads,setFetchingLeads]=useState(false);const [fetchError,setFetchError]=useState('');
+  const notificationRequest=useRef(null);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
 
   function toggleSidebar(){setCollapsed(value=>{localStorage.setItem('sidebar-collapsed',String(!value));return !value;});}
-  async function loadNotifications(){try{const data=await api('/notifications');setNotifications(data.notifications||[]);setUnreadCount(data.unreadCount||0);}catch{}}
-  useEffect(()=>{loadNotifications();const timer=setInterval(loadNotifications,30000);const refresh=()=>loadNotifications();window.addEventListener('lead-notifications:refresh',refresh);return()=>{clearInterval(timer);window.removeEventListener('lead-notifications:refresh',refresh);};},[user.id]);
+  function loadNotifications(){
+    if(notificationRequest.current)return notificationRequest.current;
+    notificationRequest.current=api('/notifications').then(data=>{setNotifications(data.notifications||[]);setUnreadCount(data.unreadCount||0);}).finally(()=>{notificationRequest.current=null;});
+    return notificationRequest.current;
+  }
+  useEffect(()=>{const refresh=()=>{loadNotifications().catch(()=>{});};refresh();const timer=setInterval(refresh,10*60*1000);window.addEventListener('lead-notifications:refresh',refresh);return()=>{clearInterval(timer);window.removeEventListener('lead-notifications:refresh',refresh);};},[user.id]);
+  useEffect(()=>{
+    const read=event=>{
+      setUnreadCount(event.detail.unreadCount);
+      setNotifications(items=>items.map(item=>Number(item.lead_id)===Number(event.detail.leadId)?{...item,read_at:item.read_at||new Date().toISOString()}:item));
+    };
+    window.addEventListener('lead-notifications:read',read);
+    return()=>window.removeEventListener('lead-notifications:read',read);
+  },[]);
+  async function fetchLeads(){
+    if(fetchingLeads)return;
+    setFetchingLeads(true);setFetchError('');
+    try{await loadNotifications();}
+    catch(error){setFetchError(error.message||'Unable to refresh notifications');}
+    finally{
+      navigate('/leads',{state:{leadsRefresh:Date.now()}});
+      setFetchingLeads(false);
+    }
+  }
   useEffect(()=>setNoticeOpen(false),[location.pathname,location.search]);
-  async function openLeadNotification(notification){await api(`/notifications/leads/${notification.lead_id}/read`,{method:'POST',silent:true});setUnreadCount(value=>Math.max(0,value-(!notification.read_at?1:0)));navigate(`/leads/${notification.lead_id}`);}
+  function openLeadNotification(notification){setNoticeOpen(false);navigate(`/leads/${notification.lead_id}`);}
   async function markAllRead(){await api('/notifications/read-all',{method:'POST',silent:true});setUnreadCount(0);setNotifications(value=>value.map(item=>({...item,read_at:item.read_at||new Date().toISOString()})));}
 
   const close = () => setOpen(false);
@@ -64,12 +88,13 @@ export default function Layout() {
             <span>{new Intl.DateTimeFormat('en-IN', { weekday:'long', day:'numeric', month:'long' }).format(new Date())}</span>
           </div>
           <div className="topbar-actions">
+            {can('PAGE_LEADS')&&<button type="button" className="btn btn-ghost btn-sm fetch-leads-btn" disabled={fetchingLeads} onClick={fetchLeads} title="Fetch latest leads and notifications"><RefreshCw size={14} className={fetchingLeads?'spin':''}/>{fetchingLeads?'Fetching...':'Fetch Lead'}</button>}
             <button className="topbar-icon" aria-label="Notifications" aria-expanded={noticeOpen} onClick={()=>setNoticeOpen(value=>!value)}><Bell size={18}/>{unreadCount>0&&<b>{unreadCount>99?'99+':unreadCount}</b>}</button>
             {noticeOpen&&<section className="notification-popover"><header><div><strong>Notifications</strong><span>{unreadCount} new assigned lead{unreadCount===1?'':'s'}</span></div>{unreadCount>0&&<button onClick={markAllRead}>Mark all read</button>}</header>{unreadCount>0&&can('PAGE_LEADS')&&<button className="notification-summary" onClick={()=>navigate('/leads?newAssigned=1')}><Bell size={15}/><span><strong>View new assigned leads</strong><small>Open all {unreadCount} unread lead{unreadCount===1?'':'s'}</small></span></button>}<div className="notification-list">{notifications.length?notifications.map(item=><button key={item.id} className={item.read_at?'':'unread'} onClick={()=>openLeadNotification(item)}><i>{String(item.contact_name||'L').slice(0,1).toUpperCase()}</i><span><strong>{item.contact_name}</strong><small>{item.company_name||item.source||'New lead'} · {new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(new Date(item.created_at.endsWith?.('Z')?item.created_at:`${item.created_at}Z`))}</small></span></button>):<p>No lead notifications yet.</p>}</div></section>}
             <div className="user-avatar">{user.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</div>
           </div>
         </header>
-        <div className="page-wrap"><Outlet /></div>
+        <div className="page-wrap">{fetchError&&<div className="alert error" role="alert">{fetchError}</div>}<Outlet /></div>
       </main>
     </div>
   );

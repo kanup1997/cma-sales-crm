@@ -1,5 +1,7 @@
 import { connect } from '@tursodatabase/serverless';
 import bcrypt from 'bcryptjs';
+import {leadPhoneSchema} from './utils/leadPhone.js';
+import {performanceIndexes} from './utils/performanceIndexes.js';
 
 const url=process.env.TURSO_DATABASE_URL,authToken=process.env.TURSO_AUTH_TOKEN;
 if(!url||!authToken)throw new Error('Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN. Add both to server/.env locally and Render Environment in production.');
@@ -51,6 +53,8 @@ async function ensureColumns(table,defs){const cols=new Set((await queryAll(`PRA
 async function seedUser(name,email,password,role){if(!await queryOne('SELECT id FROM users WHERE email=?',[email]))await run('INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)',[name,email,bcrypt.hashSync(password,10),role]);}
 let initialized=false;
 export async function initDb(){if(initialized)return;await db.exec('PRAGMA foreign_keys=ON');await db.batch(schemaStatements);
+ await db.batch(performanceIndexes);
+ await ensureColumns('leads',[['phone_key','TEXT']]);await db.batch(leadPhoneSchema,'immediate');
  await ensureColumns('users',[['phone','TEXT'],['designation','TEXT'],['city','TEXT'],['bio','TEXT'],['permissions_configured','INTEGER NOT NULL DEFAULT 0']]);await ensureColumns('leads',[['box_size','TEXT'],['quantity','INTEGER DEFAULT 0'],['quantity_range','TEXT'],['per_box_budget','REAL DEFAULT 0'],['finalized','INTEGER NOT NULL DEFAULT 0'],['sample_sent','INTEGER NOT NULL DEFAULT 0'],['order_sent','INTEGER NOT NULL DEFAULT 0'],['quote_sent_at','TEXT'],['finalized_at','TEXT'],['sample_sent_at','TEXT'],['order_sent_at','TEXT']]);await ensureColumns('followups',[['followup_status','TEXT']]);await ensureColumns('sheet_integrations',[['assignment_mode',"TEXT NOT NULL DEFAULT 'FIXED'"],['assignment_user_ids_json',"TEXT NOT NULL DEFAULT '[]'"],['leads_per_user','INTEGER NOT NULL DEFAULT 1'],['assignment_cursor','INTEGER NOT NULL DEFAULT 0']]);await ensureColumns('sheet_sync_logs',[['updated_count','INTEGER NOT NULL DEFAULT 0']]);await ensureColumns('purchase_orders',[['manual_invoice','INTEGER NOT NULL DEFAULT 0']]);
  await db.batch([{sql:'INSERT OR IGNORE INTO document_sequences(name,next_value) VALUES(?,?)',args:['invoice',10001]},{sql:'INSERT OR IGNORE INTO document_sequences(name,next_value) VALUES(?,?)',args:['purchase_order',1]}]);await seedUser('CMA Admin','admin@chocomanualart.com','Admin@123','ADMIN');await seedUser('Demo Sales','sales@chocomanualart.com','Sales@123','SALES');
  const seeds=[];

@@ -17,6 +17,7 @@ import maintenanceRoutes from './routes/maintenance.js';
 
 import { startSheetScheduler } from './services/sheetSync.js';
 import { initDb } from './db.js';
+import {isDuplicatePhoneError,duplicatePhoneMessage} from './utils/leadPhone.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -56,7 +57,9 @@ app.use(
     allowedHeaders: [
       'Content-Type',
       'Authorization'
-    ]
+    ],
+    maxAge: 600,
+    exposedHeaders: ['Server-Timing']
   })
 );
 
@@ -65,6 +68,17 @@ app.use(
     limit: '2mb'
   })
 );
+
+// Expose application processing time separately from network latency.
+app.use((req,res,next)=>{
+  const started=performance.now();
+  const end=res.end;
+  res.end=function(...args){
+    if(!res.headersSent)res.setHeader('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);
+    return end.apply(this,args);
+  };
+  next();
+});
 
 /* ----------------------------------
    Health
@@ -105,6 +119,7 @@ app.use('/api/maintenance', maintenanceRoutes);
 ----------------------------------- */
 
 app.use((err, req, res, next) => {
+  if(isDuplicatePhoneError(err))return res.status(409).json({message:duplicatePhoneMessage});
   console.error('API ERROR:', err);
 
   res.status(500).json({

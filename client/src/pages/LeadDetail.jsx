@@ -22,7 +22,13 @@ export default function LeadDetail(){
   const [editing,setEditing]=useState(false); const [saving,setSaving]=useState(false);
 
   async function load(){try{const d=await api(`/leads/${id}`);setLead(d.lead);setFollowups(d.followups);setStatuses(d.statuses);setDetailsForm(detailValues(d.lead));setForm(f=>({...f,status:d.lead.status,nextFollowupAt:localInput(d.lead.next_followup_at)}));}catch(e){setError(e.message);}}
-  useEffect(()=>{load();api(`/notifications/leads/${id}/read`,{method:'POST',silent:true}).then(()=>window.dispatchEvent(new Event('lead-notifications:refresh'))).catch(()=>{});if(user.role==='ADMIN')api('/users').then(d=>setUsers(d.users));},[id,user.role]);
+  useEffect(()=>{load();},[id]);
+  useEffect(()=>{
+    // Cleanup cancels the development StrictMode replay before sending a write.
+    const timer=setTimeout(()=>{api(`/notifications/leads/${id}/read`,{method:'POST',silent:true}).then(data=>window.dispatchEvent(new CustomEvent('lead-notifications:read',{detail:{leadId:id,unreadCount:data.unreadCount}}))).catch(()=>{});},0);
+    return()=>clearTimeout(timer);
+  },[id]);
+  useEffect(()=>{if(user.role==='ADMIN')api('/users').then(d=>setUsers(d.users)).catch(()=>{});},[user.role]);
   async function saveFollowup(e){e.preventDefault();try{await api(`/leads/${id}/followups`,{method:'POST',body:JSON.stringify({...form,nextFollowupAt:form.nextFollowupAt?new Date(form.nextFollowupAt).toISOString():null})});setForm(f=>({...f,outcome:'',note:''}));load();}catch(e){setError(e.message);}}
   async function assign(userId){await api(`/leads/${id}/assign`,{method:'PATCH',body:JSON.stringify({userId:userId||null})});load();}
   async function saveDetails(e){e.preventDefault();setSaving(true);setError('');try{await api(`/leads/${id}`,{method:'PATCH',body:JSON.stringify({...detailsForm,status:form.status,nextFollowupAt:detailsForm.nextFollowupAt?new Date(detailsForm.nextFollowupAt).toISOString():null})});await load();setEditing(false);}catch(e){setError(e.message);}finally{setSaving(false);}}

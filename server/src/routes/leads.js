@@ -9,6 +9,8 @@ import {standardLeadRow} from '../services/leadData.js';
 import {notifyLeadAssigned} from '../services/leadNotifications.js';
 import {logActivity} from '../services/activityLog.js';
 import {getPagination,paginationMeta} from '../utils/pagination.js';
+import {leadOrderBy} from '../utils/leadSort.js';
+import {phoneKey,isDuplicatePhoneError,duplicatePhoneMessage} from '../utils/leadPhone.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -71,22 +73,22 @@ router.get('/', asyncHandler(async (req, res) => {
   }
   if(followup==='range'&&start&&end){where.push("l.next_followup_at IS NOT NULL AND l.next_followup_at>=? AND l.next_followup_at<? AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");params.push(start,end);}if(followup==='all')where.push("l.next_followup_at IS NOT NULL AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");
 
-  const total=Number((await queryOne(`SELECT COUNT(*) count FROM leads l WHERE ${where.join(' AND ')}`,params))?.count||0);
-  const leads = await queryAll(
+  const [countRow,leadStatuses,leads]=await Promise.all([
+    queryOne(`SELECT COUNT(*) count FROM leads l WHERE ${where.join(' AND ')}`,params),
+    masterCodes('LEAD_STATUS',statuses),
+    queryAll(
     `SELECT l.*, u.name AS assigned_name, u.email AS assigned_email,(SELECT f.followup_status FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_status,(SELECT f.note FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_note
      FROM leads l
      LEFT JOIN users u ON u.id = l.assigned_to
      WHERE ${where.join(' AND ')}
-     ORDER BY
-       CASE WHEN l.status='NEW_LEAD' THEN 0 ELSE 1 END,CASE WHEN l.status='NEW_LEAD' THEN datetime(l.created_at) END DESC,CASE WHEN l.next_followup_at IS NULL THEN 1 ELSE 0 END,
-       l.next_followup_at ASC,
-       l.updated_at DESC
+     ORDER BY ${leadOrderBy(req.query)}
      LIMIT ? OFFSET ?`,
     [...params,pageSize,offset]
-  );
+  )]);
+  const total=Number(countRow?.count||0);
 
   const progress=leads.length?await queryAll(`SELECT lead_id,code FROM lead_progress WHERE lead_id IN (${leads.map(()=>'?').join(',')}) ORDER BY created_at`,leads.map(x=>x.id)):[],map=new Map();progress.forEach(x=>(map.get(x.lead_id)||map.set(x.lead_id,[]).get(x.lead_id)).push(x.code));leads.forEach(x=>x.progress_codes=map.get(x.id)||[]);
-  res.json({ leads, statuses:await masterCodes('LEAD_STATUS',statuses),pagination:paginationMeta(total,page,pageSize) });
+  res.json({ leads, statuses:leadStatuses,pagination:paginationMeta(total,page,pageSize) });
 }));
 
 router.get('/actions/export',asyncHandler(async(req,res)=>{const scope=leadScope(req),rows=await queryAll(`SELECT l.*,u.name assigned_name,u.email assigned_email,(SELECT f.followup_status FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_status,(SELECT f.note FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_note FROM leads l LEFT JOIN users u ON u.id=l.assigned_to WHERE ${scope.sql} ORDER BY l.updated_at DESC`,scope.params),columns=[['Lead ID','id'],['Contact Name','contact_name'],['Company Name','company_name'],['Phone','phone'],['Email','email'],['Location','city'],['Source','source'],['Requirement','requirement'],['Box Size','box_size'],['Quantity','quantity'],['Quantity Range','quantity_range'],['Per Box Budget','per_box_budget'],['Estimated Value','estimated_value'],['Lead Status','status'],['Owner','assigned_name'],['Next Follow-up','next_followup_at'],['Follow-up Status','latest_followup_status'],['Follow-up Note','latest_followup_note'],['Notes','notes'],['Created At','created_at'],['Updated At','updated_at']],cell=value=>`"${String(value??'').replaceAll('"','""')}"`,csv='\uFEFF'+[columns.map(x=>cell(x[0])).join(','),...rows.map(row=>columns.map(([,key])=>cell(row[key])).join(','))].join('\r\n');res.setHeader('Content-Type','text/csv; charset=utf-8');res.setHeader('Content-Disposition',`attachment; filename="leads-${new Date().toISOString().slice(0,10)}.csv"`);res.send(csv);}));
@@ -107,16 +109,16 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return res.status(403).json({ message: 'You cannot access this lead' });
   }
 
-  const followups = await queryAll(
+  const [followups,progress,leadStatuses]=await Promise.all([queryAll(
     `SELECT f.*, u.name AS user_name
      FROM followups f
      JOIN users u ON u.id = f.user_id
      WHERE f.lead_id = ?
      ORDER BY f.followup_at DESC, f.id DESC`,
     [Number(lead.id)]
-  );
-  lead.progress_codes=(await queryAll('SELECT code FROM lead_progress WHERE lead_id=? ORDER BY created_at,code',[lead.id])).map(x=>x.code);
-  res.json({ lead, followups, statuses:await masterCodes('LEAD_STATUS',statuses) });
+  ),queryAll('SELECT code FROM lead_progress WHERE lead_id=? ORDER BY created_at,code',[lead.id]),masterCodes('LEAD_STATUS',statuses)]);
+  lead.progress_codes=progress.map(x=>x.code);
+  res.json({ lead, followups, statuses:leadStatuses });
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
@@ -331,7 +333,7 @@ router.post('/actions/import', requirePermission('PAGE_IMPORT'), upload.single('
 
   const duplicateStmt = await db.prepare(`
     SELECT id FROM leads
-    WHERE (? <> '' AND phone = ?) OR (? <> '' AND lower(email) = lower(?))
+    WHERE (? <> '' AND phone_key = ?) OR (? <> '' AND lower(email) = lower(?))
     LIMIT 1
   `);
   const insertStmt = await db.prepare(`
@@ -354,7 +356,7 @@ router.post('/actions/import', requirePermission('PAGE_IMPORT'), upload.single('
       continue;
     }
 
-    const duplicate = await duplicateStmt.get([phone, phone, email, email]);
+    const duplicate = await duplicateStmt.get([phoneKey(phone), phoneKey(phone), email, email]);
     if (duplicate) {
       skipped += 1;
       continue;
@@ -377,7 +379,8 @@ router.post('/actions/import', requirePermission('PAGE_IMPORT'), upload.single('
     if (!statuses.includes(status)) status = 'NEW_LEAD';
     const rowOwner=assignmentMode==='ROUND_ROBIN'?rotationUsers[Math.floor(imported/leadsPerUser)%rotationUsers.length]:assignedTo;
 
-    const insertResult=await insertStmt.run([
+    let insertResult;
+    try{insertResult=await insertStmt.run([
       data.companyName||null,
       contactName,
       phone || null,
@@ -388,7 +391,8 @@ router.post('/actions/import', requirePermission('PAGE_IMPORT'), upload.single('
       nextFollowupAt,
       data.notes||null,
       req.user.id
-    ]);if(rowOwner)await notifyLeadAssigned(rowOwner,Number(insertResult.lastInsertRowid),`import:${Date.now()}:${index}:user:${rowOwner}`);
+    ]);}catch(error){if(!isDuplicatePhoneError(error))throw error;skipped++;errors.push(`Row ${index+2}: ${duplicatePhoneMessage}`);continue;}
+    if(rowOwner)await notifyLeadAssigned(rowOwner,Number(insertResult.lastInsertRowid),`import:${Date.now()}:${index}:user:${rowOwner}`);
     imported += 1;
   }
 

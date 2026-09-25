@@ -1,11 +1,28 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const pendingReads = new Map();
 
-export async function api(path, options = {}) {
-  window.dispatchEvent(new Event('api:start'));
+export function api(path, options = {}) {
   const token = localStorage.getItem('cma_crm_token');
-  const headers = { ...(options.headers || {}) };
-  if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const method = String(options.method || 'GET').toUpperCase();
+  // Share only identical in-flight reads. Completed responses are never cached,
+  // so manual refreshes still fetch fresh data. Abortable requests stay independent.
+  const share = method === 'GET' && !options.signal && !options.body;
+  const {headers: suppliedHeaders, silent, ...requestOptions} = options;
+  const key = share ? JSON.stringify([path, token, [...new Headers(suppliedHeaders).entries()], requestOptions]) : null;
+  if (share && pendingReads.has(key)) return pendingReads.get(key);
+  if (method !== 'GET') pendingReads.clear();
+  const request = sendRequest(path, options, token, method).finally(() => {
+    if (share && pendingReads.get(key) === request) pendingReads.delete(key);
+  });
+  if (share) pendingReads.set(key, request);
+  return request;
+}
+
+async function sendRequest(path, options, token, method) {
+  window.dispatchEvent(new Event('api:start'));
+  const headers = new Headers(options.headers);
+  if (options.body != null && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type','application/json');
+  if (token) headers.set('Authorization',`Bearer ${token}`);
 
   let response;
   try { response = await fetch(`${API_BASE}${path}`, { ...options, headers }); }
@@ -13,8 +30,8 @@ export async function api(path, options = {}) {
   let data = {};
   try { data = await response.json(); } catch { data = {}; }
   window.dispatchEvent(new Event('api:end'));
+  if (method !== 'GET') pendingReads.clear();
   if (!response.ok) throw new Error(data.message || 'Request failed');
-  const method = String(options.method || 'GET').toUpperCase();
   if (method !== 'GET' && path !== '/auth/login' && !options.silent) {
     const message = data.message || (path.includes('/import') ? `${data.imported || 0} leads imported successfully` : 'Changes saved successfully');
     window.dispatchEvent(new CustomEvent('app:success', { detail: { message } }));

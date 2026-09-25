@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { api, downloadApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StatusBadge from '../components/StatusBadge';
@@ -7,17 +7,25 @@ import LeadActions from '../components/LeadActions';
 import { Download, SlidersHorizontal, Trash2, RotateCcw } from 'lucide-react';
 import { useMasterOptions } from '../hooks/useMasterOptions';
 import SearchableSelect from '../components/SearchableSelect';
-import {SortableTh,useSortedRows} from '../components/SortableTable';
+import {SortableTh} from '../components/SortableTable';
 import FollowupStatusBadge from '../components/FollowupStatusBadge';
 import {FOLLOWUP_STATUS_FALLBACK} from '../data/statusOptions';
 import Pagination,{LoadingOverlay,emptyPagination} from '../components/Pagination';
 
 const defaultForm = { companyName:'', contactName:'', phone:'', email:'', city:'', source:'', status:'NEW_LEAD', requirement:'', boxSize:'', quantity:'', perBoxBudget:'', estimatedValue:'', nextFollowupAt:'' };
 function toIsoLocal(v) { return v ? new Date(v).toISOString() : null; }
-function fmt(v) { return v ? new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(new Date(v)) : '-'; }
+function fmt(v) {
+  if (!v) return '-';
+  // SQLite datetime('now') values are UTC but do not include a timezone.
+  const value = String(v).trim().replace(' ', 'T');
+  const date = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`);
+  return Number.isNaN(date.getTime()) ? '-' : new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(date);
+}
 
 export default function Leads() {
   const { user,can } = useAuth();
+  const location=useLocation();
+  const leadsRefresh=location.state?.leadsRefresh;
   const initialQuery=useMemo(()=>new URLSearchParams(window.location.search),[]);
   const masterOptions=useMasterOptions();
   const [leads, setLeads] = useState([]); const [users, setUsers] = useState([]); const [statuses, setStatuses] = useState([]);
@@ -28,19 +36,33 @@ export default function Leads() {
   const [selected, setSelected] = useState([]); const [bulkUser, setBulkUser] = useState('');
   const [showAdd, setShowAdd] = useState(false); const [form, setForm] = useState(defaultForm); const [error, setError] = useState('');
   const [pagination,setPagination]=useState(emptyPagination); const [loading,setLoading]=useState(true);
+  const [sort,setSort]=useState({key:'created_at',direction:'desc'});
+  const requestId=useRef(0);
+  const leadSort={rows:leads,sort,toggle(key){
+    requestId.current+=1;
+    setSort(current=>({key,direction:current.key===key&&current.direction==='asc'?'desc':'asc'}));
+    setPagination(value=>({...value,page:1}));
+    setSelected([]);
+  }};
 
   async function load() {
+    const id=++requestId.current;
     const params = buildParams();
+    params.set('sortBy',sort.key);params.set('sortDirection',sort.direction);
     params.set('page',pagination.page);params.set('pageSize',pagination.pageSize);setLoading(true);
-    try { const d = await api(`/leads?${params}`); setLeads(d.leads); setStatuses(d.statuses);setPagination(d.pagination||emptyPagination);setError(''); }
-    catch(e){ setError(e.message); }finally{setLoading(false);}
+    try { const d = await api(`/leads?${params}`); if(id!==requestId.current)return;setLeads(d.leads); setStatuses(d.statuses);setPagination(d.pagination||emptyPagination);setError(''); }
+    catch(e){ if(id===requestId.current)setError(e.message); }finally{if(id===requestId.current)setLoading(false);}
   }
   useEffect(() => { setPagination(value=>({...value,page:1})); }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter]);
-  useEffect(() => { const t=setTimeout(load,250); return()=>clearTimeout(t); }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter,pagination.page,pagination.pageSize]);
+  useEffect(() => {
+    if(!leadsRefresh)return;
+    resetFilters();setSort({key:'created_at',direction:'desc'});setSelected([]);
+    setPagination(value=>({...value,page:1}));
+  },[leadsRefresh]);
+  useEffect(() => { const t=setTimeout(load,250); return()=>{clearTimeout(t);requestId.current+=1;}; }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter,pagination.page,pagination.pageSize,sort,leadsRefresh]);
   useEffect(() => { if(user.role==='ADMIN') api('/users?all=1').then(d=>setUsers(d.users)).catch(()=>{}); },[user.role]);
 
   const allSelected = useMemo(() => leads.length && leads.every(l=>selected.includes(l.id)),[leads,selected]);
-  const sortedLeadRows=useSortedRows(leads,'created_at','desc');const leadSort={...sortedLeadRows,rows:[...sortedLeadRows.rows].sort((a,b)=>Number(b.status==='NEW_LEAD')-Number(a.status==='NEW_LEAD'))};
   function toggleAll(){ setSelected(allSelected ? [] : leads.map(l=>l.id)); }
   function buildParams(includeFilters=true){const params=new URLSearchParams();params.set('excludeNotInterested','1');if(!includeFilters)return params;if(q)params.set('q',q);if(status)params.set('status',status);if(followupStatus)params.set('followupStatus',followupStatus);if(assignedTo)params.set('assignedTo',assignedTo);if(newAssigned)params.set('newAssigned','1');Object.entries(dashboardFilter).forEach(([key,value])=>{if(value)params.set(key,value);});Object.entries(advanced).forEach(([key,value])=>{if(!value)return;if(key==='followupFrom')params.set(key,new Date(`${value}T00:00:00`).toISOString());else if(key==='followupTo'){const d=new Date(`${value}T00:00:00`);d.setDate(d.getDate()+1);params.set(key,d.toISOString());}else params.set(key,value);});return params;}
   function resetFilters(){setQ('');setStatus('');setFollowupStatus('');setAssignedTo('');setNewAssigned(false);setDashboardFilter({followup:'',pipeline:'',start:'',end:'',sampleFrom:'',sampleTo:''});setAdvanced({city:'',source:'',boxSize:'',minQuantity:'',maxQuantity:'',minBudget:'',maxBudget:'',followupFrom:'',followupTo:''});}
