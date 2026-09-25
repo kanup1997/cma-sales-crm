@@ -2,6 +2,7 @@ import { connect } from '@tursodatabase/serverless';
 import bcrypt from 'bcryptjs';
 import {leadPhoneSchema} from './utils/leadPhone.js';
 import {performanceIndexes} from './utils/performanceIndexes.js';
+import {timeDatabase,databaseLabel} from './utils/requestTiming.js';
 
 const url=process.env.TURSO_DATABASE_URL,authToken=process.env.TURSO_AUTH_TOKEN;
 if(!url||!authToken)throw new Error('Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN. Add both to server/.env locally and Render Environment in production.');
@@ -24,9 +25,9 @@ async function execute(method,sql,params=[]){
   }
   throw lastError;
 }
-export const queryOne=(sql,params=[])=>execute('get',sql,params);
-export const queryAll=(sql,params=[])=>execute('all',sql,params);
-export const run=(sql,params=[])=>execute('run',sql,params);
+export const queryOne=(sql,params=[])=>timeDatabase(databaseLabel(sql),()=>execute('get',sql,params));
+export const queryAll=(sql,params=[])=>timeDatabase(databaseLabel(sql),()=>execute('all',sql,params));
+export const run=(sql,params=[])=>timeDatabase(databaseLabel(sql),()=>execute('run',sql,params));
 export async function withTransaction(work){const transaction=db.transactionAsync(async tx=>work({queryOne:(sql,params=[])=>tx.get(sql,...params),queryAll:(sql,params=[])=>tx.all(sql,...params),run:(sql,params=[])=>tx.run(sql,...params)}));return transaction.immediate();}
 
 const schemaStatements=[

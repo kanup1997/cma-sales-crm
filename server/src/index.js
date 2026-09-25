@@ -18,6 +18,7 @@ import maintenanceRoutes from './routes/maintenance.js';
 import { startSheetScheduler } from './services/sheetSync.js';
 import { initDb } from './db.js';
 import {isDuplicatePhoneError,duplicatePhoneMessage} from './utils/leadPhone.js';
+import {requestTiming} from './utils/requestTiming.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -70,15 +71,7 @@ app.use(
 );
 
 // Expose application processing time separately from network latency.
-app.use((req,res,next)=>{
-  const started=performance.now();
-  const end=res.end;
-  res.end=function(...args){
-    if(!res.headersSent)res.setHeader('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);
-    return end.apply(this,args);
-  };
-  next();
-});
+app.use(requestTiming);
 
 /* ----------------------------------
    Health
