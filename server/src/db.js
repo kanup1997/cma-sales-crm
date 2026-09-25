@@ -3,31 +3,37 @@ import bcrypt from 'bcryptjs';
 import {leadPhoneSchema} from './utils/leadPhone.js';
 import {performanceIndexes} from './utils/performanceIndexes.js';
 import {timeDatabase,databaseLabel} from './utils/requestTiming.js';
+import {createConnectionPool} from './utils/connectionPool.js';
 
 const url=process.env.TURSO_DATABASE_URL,authToken=process.env.TURSO_AUTH_TOKEN;
 if(!url||!authToken)throw new Error('Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN. Add both to server/.env locally and Render Environment in production.');
 const config={url,authToken};
 export const db=connect(config);
-const pool=Array.from({length:4},()=>connect(config));let poolCursor=0;
+const pool=createConnectionPool(()=>connect(config),4);
 async function execute(method,sql,params=[]){
   let lastError;
   for(let attempt=0;attempt<3;attempt++){
-    const index=poolCursor++%pool.length;
-    try{return await pool[index][method](sql,...params);}
+    const lease=await timeDatabase('pool-wait',()=>pool.acquire());
+    try{return await timeDatabase(method==='batch'?'read-batch':databaseLabel(sql),()=>method==='batch'?lease.connection.batch(sql):lease.connection[method](sql,...params));}
     catch(error){
       lastError=error;
       const message=String(error?.message||error),cause=String(error?.cause?.code||'');
       const transient=message.includes('fetch failed')||message.includes('ECONNRESET')||message.includes('HTTP error! status: 404')||cause==='ECONNRESET'||cause==='ETIMEDOUT';
       if(!transient)throw error;
-      pool[index]=connect(config);
-      if(attempt<2)await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));
+      lease.reset();
     }
+    finally{lease.release();}
+    if(attempt<2)await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));
   }
   throw lastError;
 }
-export const queryOne=(sql,params=[])=>timeDatabase(databaseLabel(sql),()=>execute('get',sql,params));
-export const queryAll=(sql,params=[])=>timeDatabase(databaseLabel(sql),()=>execute('all',sql,params));
-export const run=(sql,params=[])=>timeDatabase(databaseLabel(sql),()=>execute('run',sql,params));
+export const queryOne=(sql,params=[])=>execute('get',sql,params);
+export const queryAll=(sql,params=[])=>execute('all',sql,params);
+export const run=(sql,params=[])=>execute('run',sql,params);
+export async function queryBatch(statements){
+  if(statements.some(statement=>!/^\s*SELECT\b/i.test(statement.sql)))throw new Error('queryBatch accepts only SELECT statements');
+  return (await execute('batch',statements)).map(result=>result.rows);
+}
 export async function withTransaction(work){const transaction=db.transactionAsync(async tx=>work({queryOne:(sql,params=[])=>tx.get(sql,...params),queryAll:(sql,params=[])=>tx.all(sql,...params),run:(sql,params=[])=>tx.run(sql,...params)}));return transaction.immediate();}
 
 const schemaStatements=[

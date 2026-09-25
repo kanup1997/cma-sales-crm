@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
-import { db, queryAll, queryOne, run, withTransaction } from '../db.js';
+import { db, queryAll, queryOne, queryBatch, run, withTransaction } from '../db.js';
 import { adminOnly, authRequired } from '../middleware/auth.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import {hasPermission,requirePermission} from '../permissions.js';
@@ -73,21 +73,21 @@ router.get('/', asyncHandler(async (req, res) => {
   }
   if(followup==='range'&&start&&end){where.push("l.next_followup_at IS NOT NULL AND l.next_followup_at>=? AND l.next_followup_at<? AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");params.push(start,end);}if(followup==='all')where.push("l.next_followup_at IS NOT NULL AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");
 
-  const [countRow,leadStatuses,leads]=await Promise.all([
-    queryOne(`SELECT COUNT(*) count FROM leads l WHERE ${where.join(' AND ')}`,params),
-    masterCodes('LEAD_STATUS',statuses),
-    queryAll(
-    `SELECT l.*, u.name AS assigned_name, u.email AS assigned_email,(SELECT f.followup_status FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_status,(SELECT f.note FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_note
+  const [countRows,statusRows,leads]=await queryBatch([
+    {sql:`SELECT COUNT(*) count FROM leads l WHERE ${where.join(' AND ')}`,args:params},
+    {sql:'SELECT code FROM masters WHERE category=? AND active=1 ORDER BY sort_order,label',args:['LEAD_STATUS']},
+    {sql:`SELECT l.*, u.name AS assigned_name, u.email AS assigned_email,(SELECT f.followup_status FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_status,(SELECT f.note FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_note,
+     (SELECT json_group_array(code) FROM (SELECT code FROM lead_progress WHERE lead_id=l.id ORDER BY created_at)) progress_codes_json
      FROM leads l
      LEFT JOIN users u ON u.id = l.assigned_to
      WHERE ${where.join(' AND ')}
      ORDER BY ${leadOrderBy(req.query)}
-     LIMIT ? OFFSET ?`,
-    [...params,pageSize,offset]
-  )]);
-  const total=Number(countRow?.count||0);
+     LIMIT ? OFFSET ?`,args:[...params,pageSize,offset]}
+  ]);
+  const total=Number(countRows[0]?.count||0);
+  const leadStatuses=statusRows.length?statusRows.map(row=>row.code):statuses;
 
-  const progress=leads.length?await queryAll(`SELECT lead_id,code FROM lead_progress WHERE lead_id IN (${leads.map(()=>'?').join(',')}) ORDER BY created_at`,leads.map(x=>x.id)):[],map=new Map();progress.forEach(x=>(map.get(x.lead_id)||map.set(x.lead_id,[]).get(x.lead_id)).push(x.code));leads.forEach(x=>x.progress_codes=map.get(x.id)||[]);
+  leads.forEach(lead=>{lead.progress_codes=JSON.parse(lead.progress_codes_json||'[]');delete lead.progress_codes_json;});
   res.json({ leads, statuses:leadStatuses,pagination:paginationMeta(total,page,pageSize) });
 }));
 
