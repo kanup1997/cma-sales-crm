@@ -38,6 +38,7 @@ export default function App(){return <BrowserRouter><AuthProvider><ToastViewport
     <Route path="purchase-orders" element={<ProtectedRoute permission="PAGE_PURCHASE_ORDERS"><Orders/></ProtectedRoute>}/>
     <Route path="tax-invoices" element={<ProtectedRoute permission="PAGE_TAX_INVOICES"><Invoices/></ProtectedRoute>}/>
     <Route path="purchase-orders/:id" element={<ProtectedRoute permission="PAGE_PURCHASE_ORDERS"><PurchaseOrder/></ProtectedRoute>}/>
+    <Route path="invoices/:id/edit" element={<ProtectedRoute permission="PAGE_TAX_INVOICES"><Invoice editMode/></ProtectedRoute>}/>
     <Route path="invoices/:id" element={<ProtectedRoute permission="PAGE_TAX_INVOICES"><Invoice/></ProtectedRoute>}/>
     <Route path="import" element={<ProtectedRoute permission="PAGE_IMPORT"><ImportLeads/></ProtectedRoute>}/>
     <Route path="users" element={<ProtectedRoute permission="PAGE_USERS"><Users/></ProtectedRoute>}/>

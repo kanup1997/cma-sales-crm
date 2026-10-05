@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { Pencil, Save, X } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -14,7 +14,8 @@ function fmt(v){return v?new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',tim
 function detailValues(lead){return{companyName:lead.company_name||'',phone:lead.phone||'',email:lead.email||'',city:lead.city||'',requirement:lead.requirement||'',notes:lead.notes||'',estimatedValue:lead.estimated_value??'',boxSize:lead.box_size||'',quantity:lead.quantity??'',perBoxBudget:lead.per_box_budget??'',nextFollowupAt:localInput(lead.next_followup_at),progressCodes:lead.progress_codes||[]};}
 
 export default function LeadDetail(){
-  const {id}=useParams(); const {user}=useAuth();
+  const {id}=useParams(); const location=useLocation(); const {user}=useAuth();
+  const returnTo=location.state?.returnTo||'/leads';
   const masterOptions=useMasterOptions();
   const [lead,setLead]=useState(null); const [followups,setFollowups]=useState([]); const [statuses,setStatuses]=useState([]); const [users,setUsers]=useState([]); const [error,setError]=useState('');
   const [form,setForm]=useState({type:'CALL',followupStatus:'CALL_PENDING',outcome:'',note:'',nextFollowupAt:'',status:'NEW_LEAD'});
@@ -38,7 +39,7 @@ export default function LeadDetail(){
 
   if(!lead)return <div className="panel">{error||'Loading lead...'}</div>;
   return <>
-    <div className="page-heading"><div><Link to="/leads" className="back-link">← Back to leads</Link><h1>{lead.contact_name}</h1><p>{lead.company_name||'Individual lead'} · {lead.city||'Location not added'}</p></div><LeadActions phone={lead.phone}/></div>
+    <div className="page-heading"><div><Link to={returnTo} className="back-link">← Back to leads</Link><h1>{lead.contact_name}</h1><p>{lead.company_name||'Individual lead'} · {lead.city||'Location not added'}</p></div><LeadActions phone={lead.phone}/></div>
     {error&&<div className="alert error">{error}</div>}
     <div className="detail-grid">
       <section className={`panel ${editing?'inline-editing':''}`}><div className="panel-head"><h2>Lead Details</h2><div className="inline-actions">{editing?<><button className="btn btn-primary btn-sm" disabled={saving} onClick={saveDetails}><Save size={13}/>{saving?'Saving...':'Save'}</button><button className="btn btn-ghost btn-sm" onClick={cancelEdit}><X size={13}/>Cancel</button></>:<button className="edit-detail-btn" onClick={()=>setEditing(true)}><Pencil size={13}/> Edit</button>}</div></div>

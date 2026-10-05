@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, downloadApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StatusBadge from '../components/StatusBadge';
@@ -25,19 +25,22 @@ function fmt(v) {
 export default function Leads() {
   const { user,can } = useAuth();
   const location=useLocation();
+  const navigate=useNavigate();
   const leadsRefresh=location.state?.leadsRefresh;
   const initialQuery=useMemo(()=>new URLSearchParams(window.location.search),[]);
   const masterOptions=useMasterOptions();
   const [leads, setLeads] = useState([]); const [users, setUsers] = useState([]); const [statuses, setStatuses] = useState([]);
-  const [q, setQ] = useState(initialQuery.get('q')||''); const [status, setStatus] = useState(initialQuery.get('status')||''); const [followupStatus,setFollowupStatus]=useState(initialQuery.get('followupStatus')||''); const [assignedTo, setAssignedTo] = useState(initialQuery.get('assignedTo')||'');
+  const [q, setQ] = useState(initialQuery.get('q')||''); const [status, setStatus] = useState(initialQuery.get('status')||''); const [followupStatus,setFollowupStatus]=useState(initialQuery.get('followupStatus')||''); const [assignedTo, setAssignedTo] = useState(initialQuery.get('assignedTo')||''); const [includeArchived,setIncludeArchived]=useState(initialQuery.get('includeArchived')==='1');
   const [newAssigned,setNewAssigned]=useState(initialQuery.get('newAssigned')==='1');
-  const [dashboardFilter,setDashboardFilter]=useState({followup:initialQuery.get('followup')||'',pipeline:initialQuery.get('pipeline')||'',start:initialQuery.get('start')||'',end:initialQuery.get('end')||'',sampleFrom:initialQuery.get('sampleFrom')||'',sampleTo:initialQuery.get('sampleTo')||''});
-  const [advanced,setAdvanced]=useState({city:'',source:'',boxSize:'',minQuantity:'',maxQuantity:'',minBudget:'',maxBudget:'',followupFrom:'',followupTo:''}); const [showFilters,setShowFilters]=useState(false); const [exporting,setExporting]=useState(false);
+  const [dashboardFilter,setDashboardFilter]=useState({followup:initialQuery.get('followup')||'',pipeline:initialQuery.get('pipeline')||'',work:initialQuery.get('work')||'',workedBy:initialQuery.get('workedBy')||'',start:initialQuery.get('start')||'',end:initialQuery.get('end')||'',createdFrom:initialQuery.get('createdFrom')||'',createdTo:initialQuery.get('createdTo')||'',sampleFrom:initialQuery.get('sampleFrom')||'',sampleTo:initialQuery.get('sampleTo')||''});
+  const [advanced,setAdvanced]=useState({city:initialQuery.get('city')||'',source:initialQuery.get('source')||'',boxSize:initialQuery.get('boxSize')||'',minQuantity:initialQuery.get('minQuantity')||'',maxQuantity:initialQuery.get('maxQuantity')||'',minBudget:initialQuery.get('minBudget')||'',maxBudget:initialQuery.get('maxBudget')||'',followupFrom:initialQuery.get('followupFrom')||'',followupTo:initialQuery.get('followupTo')||''}); const [showFilters,setShowFilters]=useState(initialQuery.get('advancedOpen')==='1'); const [exporting,setExporting]=useState(false);
   const [selected, setSelected] = useState([]); const [bulkUser, setBulkUser] = useState('');
   const [showAdd, setShowAdd] = useState(false); const [form, setForm] = useState(defaultForm); const [error, setError] = useState('');
-  const [pagination,setPagination]=useState(emptyPagination); const [loading,setLoading]=useState(true);
-  const [sort,setSort]=useState({key:'created_at',direction:'desc'});
+  const [pagination,setPagination]=useState(()=>({...emptyPagination,page:Math.max(1,Number(initialQuery.get('page'))||1),pageSize:[10,20,50,100].includes(Number(initialQuery.get('pageSize')))?Number(initialQuery.get('pageSize')):20})); const [loading,setLoading]=useState(true);
+  const [sort,setSort]=useState({key:initialQuery.get('sortBy')||'created_at',direction:initialQuery.get('sortDirection')==='asc'?'asc':'desc'});
   const requestId=useRef(0);
+  const filterState=JSON.stringify({q,status,followupStatus,assignedTo,includeArchived,newAssigned,advanced,dashboardFilter});
+  const previousFilterState=useRef(filterState);
   const leadSort={rows:leads,sort,toggle(key){
     requestId.current+=1;
     setSort(current=>({key,direction:current.key===key&&current.direction==='asc'?'desc':'asc'}));
@@ -53,19 +56,21 @@ export default function Leads() {
     try { const d = await api(`/leads?${params}`); if(id!==requestId.current)return;setLeads(d.leads); setStatuses(d.statuses);setPagination(d.pagination||emptyPagination);setError(''); }
     catch(e){ if(id===requestId.current)setError(e.message); }finally{if(id===requestId.current)setLoading(false);}
   }
-  useEffect(() => { setPagination(value=>({...value,page:1})); }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter]);
+  useEffect(() => {if(previousFilterState.current===filterState)return;previousFilterState.current=filterState;setPagination(value=>({...value,page:1}));}, [filterState]);
   useEffect(() => {
     if(!leadsRefresh)return;
     resetFilters();setSort({key:'created_at',direction:'desc'});setSelected([]);
     setPagination(value=>({...value,page:1}));
   },[leadsRefresh]);
-  useEffect(() => { const t=setTimeout(load,250); return()=>{clearTimeout(t);requestId.current+=1;}; }, [q,status,followupStatus,assignedTo,newAssigned,advanced,dashboardFilter,pagination.page,pagination.pageSize,sort,leadsRefresh]);
+  useEffect(() => { const t=setTimeout(load,250); return()=>{clearTimeout(t);requestId.current+=1;}; }, [q,status,followupStatus,assignedTo,includeArchived,newAssigned,advanced,dashboardFilter,pagination.page,pagination.pageSize,sort,leadsRefresh]);
   useEffect(() => { if(user.role==='ADMIN') api('/users?all=1').then(d=>setUsers(d.users)).catch(()=>{}); },[user.role]);
 
   const allSelected = useMemo(() => leads.length && leads.every(l=>selected.includes(l.id)),[leads,selected]);
   function toggleAll(){ setSelected(allSelected ? [] : leads.map(l=>l.id)); }
-  function buildParams(includeFilters=true){const params=new URLSearchParams();params.set('excludeNotInterested','1');if(!includeFilters)return params;if(q)params.set('q',q);if(status)params.set('status',status);if(followupStatus)params.set('followupStatus',followupStatus);if(assignedTo)params.set('assignedTo',assignedTo);if(newAssigned)params.set('newAssigned','1');Object.entries(dashboardFilter).forEach(([key,value])=>{if(value)params.set(key,value);});Object.entries(advanced).forEach(([key,value])=>{if(!value)return;if(key==='followupFrom')params.set(key,new Date(`${value}T00:00:00`).toISOString());else if(key==='followupTo'){const d=new Date(`${value}T00:00:00`);d.setDate(d.getDate()+1);params.set(key,d.toISOString());}else params.set(key,value);});return params;}
-  function resetFilters(){setQ('');setStatus('');setFollowupStatus('');setAssignedTo('');setNewAssigned(false);setDashboardFilter({followup:'',pipeline:'',start:'',end:'',sampleFrom:'',sampleTo:''});setAdvanced({city:'',source:'',boxSize:'',minQuantity:'',maxQuantity:'',minBudget:'',maxBudget:'',followupFrom:'',followupTo:''});}
+  function buildParams(includeFilters=true){const params=new URLSearchParams();if(!includeArchived)params.set('excludeNotInterested','1');if(!includeFilters)return params;if(q)params.set('q',q);if(status)params.set('status',status);if(followupStatus)params.set('followupStatus',followupStatus);if(assignedTo)params.set('assignedTo',assignedTo);if(newAssigned)params.set('newAssigned','1');Object.entries(dashboardFilter).forEach(([key,value])=>{if(value)params.set(key,value);});Object.entries(advanced).forEach(([key,value])=>{if(!value)return;if(key==='followupFrom')params.set(key,new Date(`${value}T00:00:00`).toISOString());else if(key==='followupTo'){const d=new Date(`${value}T00:00:00`);d.setDate(d.getDate()+1);params.set(key,d.toISOString());}else params.set(key,value);});return params;}
+  function listSearch(){const params=new URLSearchParams();if(q)params.set('q',q);if(status)params.set('status',status);if(followupStatus)params.set('followupStatus',followupStatus);if(assignedTo)params.set('assignedTo',assignedTo);if(includeArchived)params.set('includeArchived','1');if(newAssigned)params.set('newAssigned','1');Object.entries(dashboardFilter).forEach(([key,value])=>{if(value)params.set(key,value);});Object.entries(advanced).forEach(([key,value])=>{if(value)params.set(key,value);});if(showFilters)params.set('advancedOpen','1');params.set('sortBy',sort.key);params.set('sortDirection',sort.direction);params.set('page',pagination.page);params.set('pageSize',pagination.pageSize);return params.toString();}
+  useEffect(()=>{const search=listSearch(),next=search?`?${search}`:'';if(location.search!==next)navigate({pathname:location.pathname,search:next},{replace:true,state:location.state});},[q,status,followupStatus,assignedTo,includeArchived,newAssigned,advanced,dashboardFilter,showFilters,sort,pagination.page,pagination.pageSize,location.pathname,location.search,location.state,navigate]);
+  function resetFilters(){setQ('');setStatus('');setFollowupStatus('');setAssignedTo('');setIncludeArchived(false);setNewAssigned(false);setDashboardFilter({followup:'',pipeline:'',work:'',workedBy:'',start:'',end:'',createdFrom:'',createdTo:'',sampleFrom:'',sampleTo:''});setAdvanced({city:'',source:'',boxSize:'',minQuantity:'',maxQuantity:'',minBudget:'',maxBudget:'',followupFrom:'',followupTo:''});}
   async function exportLeads(filtered){setExporting(true);setError('');try{const params=buildParams(filtered);await downloadApi(`/leads/actions/export?${params}`);}catch(e){setError(e.message);}finally{setExporting(false);}}
   async function deleteLead(lead){if(!window.confirm(`Delete ${lead.contact_name}'s lead permanently? This will also remove its follow-up history.`))return;try{await api(`/leads/${lead.id}`,{method:'DELETE'});setSelected(s=>s.filter(id=>id!==lead.id));load();}catch(e){setError(e.message);}}
   async function bulkDelete(){if(!selected.length||!window.confirm(`Delete ${selected.length} selected leads permanently?`))return;try{await api('/leads/actions/bulk-delete',{method:'POST',body:JSON.stringify({leadIds:selected})});setSelected([]);load();}catch(e){setError(e.message);}}
@@ -106,7 +111,7 @@ export default function Leads() {
       {user.role==='ADMIN' && selected.length>0 && <div className="bulk-bar"><strong>{selected.length} selected</strong><select value={bulkUser} onChange={e=>setBulkUser(e.target.value)}><option value="">Unassign</option>{users.filter(u=>u.active).map(u=><option value={u.id} key={u.id}>{u.name}</option>)}</select><button className="btn btn-primary btn-sm" onClick={bulkAssign}>Assign</button><button className="btn btn-danger btn-sm" onClick={bulkDelete}><Trash2 size={13}/>Delete</button></div>}
       <div className="table-wrap"><table className="leads-table"><thead><tr>{user.role==='ADMIN'&&<th><input type="checkbox" checked={!!allSelected} onChange={toggleAll}/></th>}<SortableTh label="Lead / Company" field="contact_name" sort={leadSort.sort} onSort={leadSort.toggle}/><SortableTh label="Contact" field="phone" sort={leadSort.sort} onSort={leadSort.toggle}/><SortableTh label="Order Details" field="quantity" sort={leadSort.sort} onSort={leadSort.toggle}/><SortableTh label="Next Follow-up" field="next_followup_at" sort={leadSort.sort} onSort={leadSort.toggle}/>{user.role==='ADMIN'&&<SortableTh label="Owner" field="assigned_name" sort={leadSort.sort} onSort={leadSort.toggle}/>}<SortableTh label="Lead Status" field="status" sort={leadSort.sort} onSort={leadSort.toggle}/><SortableTh label="Follow-up Status" field="latest_followup_status" sort={leadSort.sort} onSort={leadSort.toggle}/><th>Action</th><SortableTh label="Follow-up Note" field="latest_followup_note" sort={leadSort.sort} onSort={leadSort.toggle}/><SortableTh label="Created At" field="created_at" sort={leadSort.sort} onSort={leadSort.toggle}/><SortableTh label="Updated At" field="updated_at" sort={leadSort.sort} onSort={leadSort.toggle}/></tr></thead>
       <tbody>{leadSort.rows.map(l=><tr key={l.id}>{user.role==='ADMIN'&&<td><input type="checkbox" checked={selected.includes(l.id)} onChange={()=>setSelected(s=>s.includes(l.id)?s.filter(id=>id!==l.id):[...s,l.id])}/></td>}
-        <td><Link className="lead-link" to={`/leads/${l.id}`}>{l.contact_name}</Link><span className="cell-sub">{l.company_name||'Individual lead'}</span></td>
+        <td><Link className="lead-link" to={`/leads/${l.id}`} state={{returnTo:`${location.pathname}?${listSearch()}`}}>{l.contact_name}</Link><span className="cell-sub">{l.company_name||'Individual lead'}</span></td>
         <td>{l.phone||l.email||'-'}<span className="cell-sub">{l.city||''}</span></td><td><strong className="order-detail">{l.box_size||'Size not set'} · Qty: {l.quantity_range||Number(l.quantity||0).toLocaleString('en-IN')}</strong><span className="cell-sub">₹{Number(l.per_box_budget||0).toLocaleString('en-IN')} per box · {l.requirement||'No requirement'}</span></td><td>{fmt(l.next_followup_at)}</td>
         {user.role==='ADMIN'&&<td>{l.assigned_name||<span className="danger-text">Unassigned</span>}</td>}<td><StatusBadge status={l.status}/></td><td><FollowupStatusBadge status={l.latest_followup_status} label={masterOptions.FOLLOWUP_STATUS?.find(x=>x.code===l.latest_followup_status)?.label}/></td><td><div className="row-actions"><LeadActions phone={l.phone} compact/>{can('ACTION_LEADS_DELETE')&&<button className="delete-lead-btn" title="Delete lead" onClick={()=>deleteLead(l)}><Trash2 size={14}/></button>}</div></td><td><span className="cell-sub" title={l.latest_followup_note||''}>{l.latest_followup_note||'-'}</span></td><td className="date-cell">{fmt(l.created_at)}</td><td className="date-cell">{fmt(l.updated_at)}</td></tr>)}</tbody></table></div>
       {!leads.length&&<div className="empty">No leads found.</div>}

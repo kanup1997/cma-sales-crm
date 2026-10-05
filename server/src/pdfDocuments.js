@@ -31,13 +31,13 @@ export async function sendDocumentPdf(res,{type,number,date,po,seller}){
   const headerBottom=143;hline(doc,X,X+W,headerBottom);
 
   // Bill-to and ship-to blocks.
-  const c=po.customer,mid=X+W/2,partyTop=headerBottom,partyBottom=partyTop+120;vline(doc,mid,partyTop,partyBottom);
+  const c=po.customer,mid=X+W/2,partyTop=headerBottom;
   txt(doc,'Bill To:',73,partyTop+15,210,{size:8,bold:true});txt(doc,'Ship To:',342,partyTop+15,200,{size:8,bold:true});
   txt(doc,(c.billName||'-').toUpperCase(),73,partyTop+31,210,{size:9,bold:true});txt(doc,(c.shipName||'-').toUpperCase(),342,partyTop+31,200,{size:9,bold:true});
   const addressY=partyTop+46,billAddress=(c.billAddress||'-').toUpperCase(),shipAddress=(c.shipAddress||'-').toUpperCase();
   txt(doc,billAddress,73,addressY,215,{size:8,bold:true});txt(doc,shipAddress,342,addressY,205,{size:8,bold:true});
-  doc.font('Helvetica-Bold').fontSize(8);const billContactY=addressY+doc.heightOfString(billAddress,{width:215,lineGap:0})+5,shipContactY=addressY+doc.heightOfString(shipAddress,{width:205,lineGap:0})+5;
-  txt(doc,`Contact: ${c.billContact||'-'}\nMobile: ${c.billContactPhone||c.mobile||'-'}\nGST: ${c.gstin||'-'}`,73,billContactY,215,{size:8,bold:true});txt(doc,`Contact: ${c.shipContact||'-'}\nMobile: ${c.shipContactPhone||'-'}\nGST: ${c.shipGstin||'-'}`,342,shipContactY,205,{size:8,bold:true});hline(doc,X,X+W,partyBottom);
+  doc.font('Helvetica-Bold').fontSize(8);const billContactY=addressY+doc.heightOfString(billAddress,{width:215,lineGap:0})+5,shipContactY=addressY+doc.heightOfString(shipAddress,{width:205,lineGap:0})+5,billContact=`Contact: ${c.billContact||'-'}\nMobile: ${c.billContactPhone||c.mobile||'-'}\nGST: ${c.gstin||'-'}`,shipContact=`Contact: ${c.shipContact||'-'}\nMobile: ${c.shipContactPhone||'-'}\nGST: ${c.shipGstin||'-'}`,partyBottom=Math.max(partyTop+120,billContactY+doc.heightOfString(billContact,{width:215,lineGap:0})+10,shipContactY+doc.heightOfString(shipContact,{width:205,lineGap:0})+10);vline(doc,mid,partyTop,partyBottom);
+  txt(doc,billContact,73,billContactY,215,{size:8,bold:true});txt(doc,shipContact,342,shipContactY,205,{size:8,bold:true});hline(doc,X,X+W,partyBottom);
 
   // Compact bordered item grid. Only render rows that contain items.
   const widths=[38,205,66,55,68,95],columns=['S No.','Description','HSN Code','Quantity','Price @ INR/p','Amount (INR)'];let colX=X;const itemTop=partyBottom,rowH=20,headH=20;columns.forEach((name,i)=>{rect(doc,colX,itemTop,widths[i],headH);txt(doc,name,colX+3,itemTop+5,widths[i]-6,{size:8,bold:true,align:i>=3?'right':'left'});colX+=widths[i];});

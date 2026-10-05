@@ -31,7 +31,7 @@ function canAccessLead(req, lead) {
 
 router.get('/', asyncHandler(async (req, res) => {
   const {page,pageSize,offset}=getPagination(req.query,{maxPageSize:1000});
-  const {q='',status='',excludeNotInterested='',followupStatus='',assignedTo='',newAssigned='',followup='',pipeline='',start='',end='',sampleFrom='',sampleTo='',city='',source='',boxSize='',minQuantity='',maxQuantity='',minBudget='',maxBudget='',followupFrom='',followupTo=''}=req.query;
+  const {q='',status='',excludeNotInterested='',followupStatus='',assignedTo='',newAssigned='',followup='',pipeline='',work='',workedBy='',start='',end='',createdFrom='',createdTo='',sampleFrom='',sampleTo='',city='',source='',boxSize='',minQuantity='',maxQuantity='',minBudget='',maxBudget='',followupFrom='',followupTo=''}=req.query;
   const scope = leadScope(req);
   const where = [scope.sql];
   const params = [...scope.params];
@@ -46,7 +46,12 @@ router.get('/', asyncHandler(async (req, res) => {
     params.push(status);
   }
   if(excludeNotInterested==='1')where.push("l.status<>'NOT_INTERESTED'");
-  if(pipeline==='open')where.push("l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");
+  if(createdFrom){where.push('datetime(l.created_at)>=datetime(?)');params.push(createdFrom);}
+  if(createdTo){where.push('datetime(l.created_at)<datetime(?)');params.push(createdTo);}
+  const activePipeline="l.status NOT IN ('NOT_INTERESTED','CLOSED_WON','CLOSED_LOST')";
+  if(pipeline==='open'||pipeline==='active')where.push(activePipeline);
+  if(pipeline==='new'){where.push(activePipeline);where.push("l.status='NEW_LEAD' AND NOT EXISTS(SELECT 1 FROM followups f WHERE f.lead_id=l.id)");}
+  if(pipeline==='working'){where.push(activePipeline);where.push('EXISTS(SELECT 1 FROM followups f WHERE f.lead_id=l.id)');}
   if(sampleFrom){where.push('l.sample_sent=1 AND datetime(l.sample_sent_at)>=datetime(?)');params.push(sampleFrom);}if(sampleTo){where.push('l.sample_sent=1 AND datetime(l.sample_sent_at)<datetime(?)');params.push(sampleTo);}
   if(followupStatus){where.push('(SELECT f.followup_status FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1)=?');params.push(followupStatus);}
   if(newAssigned==='1'){where.push('EXISTS(SELECT 1 FROM lead_notifications n WHERE n.lead_id=l.id AND n.user_id=? AND n.read_at IS NULL)');params.push(req.user.id);}
@@ -60,18 +65,26 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
   if (followup === 'today' && start && end) {
-    where.push('l.next_followup_at >= ? AND l.next_followup_at < ?');
+    where.push(`${activePipeline} AND l.next_followup_at >= ? AND l.next_followup_at < ?`);
     params.push(start, end);
   }
   if (followup === 'overdue' && start) {
-    where.push("l.next_followup_at IS NOT NULL AND l.next_followup_at < ? AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");
+    where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND l.next_followup_at < ?`);
     params.push(start);
   }
   if (followup === 'upcoming' && end) {
-    where.push("l.next_followup_at IS NOT NULL AND l.next_followup_at >= ? AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");
+    where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND l.next_followup_at >= ?`);
     params.push(end);
   }
-  if(followup==='range'&&start&&end){where.push("l.next_followup_at IS NOT NULL AND l.next_followup_at>=? AND l.next_followup_at<? AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");params.push(start,end);}if(followup==='all')where.push("l.next_followup_at IS NOT NULL AND l.status NOT IN ('CLOSED_WON','CLOSED_LOST')");
+  if((work==='today'||work==='range')&&start&&end){
+    where.push(activePipeline);
+    const actorUser=req.user.role==='ADMIN'&&workedBy?Number(workedBy):req.user.role==='ADMIN'?null:req.user.id;
+    const actor=actorUser?' AND f.user_id=?':'';
+    where.push(`EXISTS(SELECT 1 FROM followups f WHERE f.lead_id=l.id${actor} AND f.followup_at>=? AND f.followup_at<?)`);
+    if(actorUser)params.push(actorUser);
+    params.push(start,end);
+  }
+  if(followup==='range'&&start&&end){where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND l.next_followup_at>=? AND l.next_followup_at<?`);params.push(start,end);}if(followup==='all')where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL`);
 
   const [countRows,statusRows,leads]=await queryBatch([
     {sql:`SELECT COUNT(*) count FROM leads l WHERE ${where.join(' AND ')}`,args:params},

@@ -8,11 +8,11 @@ const groups=[
   {title:'Dashboard Sections',items:[['SECTION_DASHBOARD_REVENUE','Revenue & order analytics'],['SECTION_DASHBOARD_FOLLOWUPS',"Today's follow-ups"]]},
   {title:'Lead Actions',items:[['ACTION_LEADS_CREATE','Create leads'],['ACTION_LEADS_EDIT','Edit leads'],['ACTION_LEADS_DELETE','Delete leads'],['ACTION_LEADS_EXPORT','Export leads']]},
   {title:'Follow-up Actions',items:[['ACTION_FOLLOWUPS_MANAGE','Add and update follow-ups']]},
-  {title:'PO & Invoice Actions',items:[['ACTION_ORDERS_CREATE','Create and edit purchase orders'],['ACTION_ORDERS_DOWNLOAD','Download document PDFs'],['ACTION_ORDERS_INVOICE','Create tax invoices']]},
+  {title:'PO & Invoice Actions',items:[['ACTION_ORDERS_CREATE','Create and edit purchase orders'],['ACTION_ORDERS_DOWNLOAD','Download document PDFs'],['ACTION_ORDERS_INVOICE','Create tax invoices'],['ACTION_INVOICES_EDIT','Edit tax invoices'],['ACTION_INVOICES_DELETE','Delete tax invoices']]},
   {title:'Report Sections',items:[['SECTION_REPORTS_TEAM','View team-wise performance']]}
 ];
 const allPermissions=groups.flatMap(group=>group.items.map(([key])=>key));
-const defaults=allPermissions.filter(key=>!['ACTION_LEADS_DELETE','SECTION_REPORTS_TEAM'].includes(key));
+const defaults=allPermissions.filter(key=>!['ACTION_LEADS_DELETE','ACTION_INVOICES_EDIT','ACTION_INVOICES_DELETE','SECTION_REPORTS_TEAM'].includes(key));
 const blank=()=>({name:'',email:'',phone:'',designation:'',city:'',bio:'',password:'',role:'SALES',active:true,permissions:[...defaults]});
 
 export default function Users(){
