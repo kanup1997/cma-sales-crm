@@ -1,0 +1,11 @@
+{
+  "name": "CMA Sales CRM",
+  "short_name": "CMA CRM",
+  "description": "ChocoManualART sales lead workspace",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f6f5",
+  "theme_color": "#14211c",
+  "gcm_sender_id": "103953800507"
+}

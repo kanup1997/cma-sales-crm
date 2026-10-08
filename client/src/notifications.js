@@ -13,7 +13,8 @@ async function saveSubscription(subscription){await api('/notifications/push/sub
 
 export async function syncPushSubscription(){
   if(!supported())return {state:'unsupported'};
-  const registration=await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.register('/sw.js');
+  const registration=await navigator.serviceWorker.ready;
   const subscription=await registration.pushManager.getSubscription();
   if(subscription){await saveSubscription(subscription.toJSON());return {state:'enabled'};}
   return {state:Notification.permission==='denied'?'blocked':'ready'};
@@ -21,7 +22,8 @@ export async function syncPushSubscription(){
 
 export async function enablePushNotifications(){
   if(!supported())return {state:'unsupported'};
-  const registration=await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.register('/sw.js');
+  const registration=await navigator.serviceWorker.ready;
   let permission=Notification.permission;
   if(permission==='default')permission=await Notification.requestPermission();
   if(permission!=='granted')return {state:'blocked'};
