@@ -12,13 +12,15 @@ const createdInPeriod=`datetime(l.created_at)>=datetime(?) AND datetime(l.create
 router.use(authRequired,requirePermission('PAGE_DASHBOARD'));
 
 router.get('/',asyncHandler(async(req,res)=>{
-  const {start,end,leadStart=start,leadEnd=end,analyticsStart=leadStart,analyticsEnd=leadEnd}=req.query;
+  const {start,end,leadStart=start,leadEnd=end,analyticsStart=leadStart,analyticsEnd=leadEnd,userId=''}=req.query;
   if(!start||!end||!leadStart||!leadEnd)return res.status(400).json({message:'today and lead period are required'});
 
-  const ownScope=req.user.role==='ADMIN'?'1=1':'l.assigned_to=?';
-  const ownParams=req.user.role==='ADMIN'?[]:[req.user.id];
-  const workedBy=req.user.role==='ADMIN'?'':' AND f.user_id=?';
-  const workedParams=req.user.role==='ADMIN'?[]:[req.user.id];
+  const requestedUserId=req.user.role==='ADMIN'&&Number.isInteger(Number(userId))&&Number(userId)>0?Number(userId):null;
+  const scopedUserId=requestedUserId||(req.user.role==='ADMIN'?null:req.user.id);
+  const ownScope=scopedUserId?'l.assigned_to=?':'1=1';
+  const ownParams=scopedUserId?[scopedUserId]:[];
+  const workedBy=scopedUserId?' AND f.user_id=?':'';
+  const workedParams=scopedUserId?[scopedUserId]:[];
   const cohortScope=`${ownScope} AND ${createdInPeriod}`;
   const cohortParams=[...ownParams,leadStart,leadEnd];
 
@@ -49,10 +51,10 @@ router.get('/',asyncHandler(async(req,res)=>{
     (SELECT COUNT(*) FROM leads l WHERE l.assigned_to=u.id AND ${createdInPeriod} AND ${active} AND l.next_followup_at IS NOT NULL AND l.next_followup_at<?) overdue,
     (SELECT COUNT(*) FROM leads l WHERE l.assigned_to=u.id AND ${createdInPeriod} AND ${active} AND EXISTS(SELECT 1 FROM followups f WHERE f.lead_id=l.id AND f.user_id=u.id AND f.followup_at>=? AND f.followup_at<?)) workedToday,
     (SELECT COUNT(*) FROM leads l WHERE l.assigned_to=u.id AND ${createdInPeriod} AND l.status='CLOSED_WON') closedWon
-    FROM users u WHERE u.active=1 ORDER BY workedToday DESC,active DESC,u.name`,[
+    FROM users u WHERE u.active=1${requestedUserId?' AND u.id=?':''} ORDER BY workedToday DESC,active DESC,u.name`,[
       leadStart,leadEnd,leadStart,leadEnd,leadStart,leadEnd,
       leadStart,leadEnd,start,end,leadStart,leadEnd,start,
-      leadStart,leadEnd,start,end,leadStart,leadEnd
+      leadStart,leadEnd,start,end,leadStart,leadEnd,...(requestedUserId?[requestedUserId]:[])
     ]):Promise.resolve([]);
 
   const [leadStats,schedule,orderSummary,invoices,recentOrders,team]=await Promise.all([statsRequest,scheduleRequest,ordersRequest,invoicesRequest,recentOrdersRequest,teamRequest]);

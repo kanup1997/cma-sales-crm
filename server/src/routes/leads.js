@@ -65,15 +65,15 @@ router.get('/', asyncHandler(async (req, res) => {
     }
   }
   if (followup === 'today' && start && end) {
-    where.push(`${activePipeline} AND l.next_followup_at >= ? AND l.next_followup_at < ?`);
+    where.push(`${activePipeline} AND datetime(l.next_followup_at) >= datetime(?) AND datetime(l.next_followup_at) < datetime(?)`);
     params.push(start, end);
   }
   if (followup === 'overdue' && start) {
-    where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND l.next_followup_at < ?`);
+    where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND datetime(l.next_followup_at) < datetime(?)`);
     params.push(start);
   }
   if (followup === 'upcoming' && end) {
-    where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND l.next_followup_at >= ?`);
+    where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND datetime(l.next_followup_at) >= datetime(?)`);
     params.push(end);
   }
   if((work==='today'||work==='range')&&start&&end){
@@ -84,7 +84,7 @@ router.get('/', asyncHandler(async (req, res) => {
     if(actorUser)params.push(actorUser);
     params.push(start,end);
   }
-  if(followup==='range'&&start&&end){where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND l.next_followup_at>=? AND l.next_followup_at<?`);params.push(start,end);}if(followup==='all')where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL`);
+  if(followup==='range'&&start&&end){where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL AND datetime(l.next_followup_at)>=datetime(?) AND datetime(l.next_followup_at)<datetime(?)`);params.push(start,end);}if(followup==='all')where.push(`${activePipeline} AND l.next_followup_at IS NOT NULL`);
 
   const [countRows,statusRows,leads]=await queryBatch([
     {sql:`SELECT COUNT(*) count FROM leads l WHERE ${where.join(' AND ')}`,args:params},
@@ -102,6 +102,15 @@ router.get('/', asyncHandler(async (req, res) => {
 
   leads.forEach(lead=>{lead.progress_codes=JSON.parse(lead.progress_codes_json||'[]');delete lead.progress_codes_json;});
   res.json({ leads, statuses:leadStatuses,pagination:paginationMeta(total,page,pageSize) });
+}));
+
+router.get('/followup-summary',asyncHandler(async(req,res)=>{
+  const {start='',end='',assignedTo=''}=req.query;
+  const scope=leadScope(req);const where=[scope.sql,"l.next_followup_at IS NOT NULL AND l.status NOT IN ('NOT_INTERESTED','CLOSED_WON','CLOSED_LOST')"];const params=[...scope.params];
+  if(assignedTo&&req.user.role==='ADMIN'){if(assignedTo==='unassigned')where.push('l.assigned_to IS NULL');else{where.push('l.assigned_to=?');params.push(Number(assignedTo));}}
+  if(!start||!end)return res.status(400).json({message:'Start and end dates are required'});
+  const counts=await queryOne(`SELECT COUNT(*) total,COALESCE(SUM(CASE WHEN datetime(l.next_followup_at)>=datetime(?) AND datetime(l.next_followup_at)<datetime(?) THEN 1 ELSE 0 END),0) today,COALESCE(SUM(CASE WHEN datetime(l.next_followup_at)<datetime(?) THEN 1 ELSE 0 END),0) overdue,COALESCE(SUM(CASE WHEN datetime(l.next_followup_at)>=datetime(?) THEN 1 ELSE 0 END),0) upcoming FROM leads l WHERE ${where.join(' AND ')}`,[start,end,start,end,...params]);
+  res.json({counts:{total:Number(counts?.total||0),today:Number(counts?.today||0),overdue:Number(counts?.overdue||0),upcoming:Number(counts?.upcoming||0)}});
 }));
 
 router.get('/actions/export',asyncHandler(async(req,res)=>{const scope=leadScope(req),rows=await queryAll(`SELECT l.*,u.name assigned_name,u.email assigned_email,(SELECT f.followup_status FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_status,(SELECT f.note FROM followups f WHERE f.lead_id=l.id ORDER BY f.followup_at DESC,f.id DESC LIMIT 1) latest_followup_note FROM leads l LEFT JOIN users u ON u.id=l.assigned_to WHERE ${scope.sql} ORDER BY l.updated_at DESC`,scope.params),columns=[['Lead ID','id'],['Contact Name','contact_name'],['Company Name','company_name'],['Phone','phone'],['Email','email'],['Location','city'],['Source','source'],['Requirement','requirement'],['Box Size','box_size'],['Quantity','quantity'],['Quantity Range','quantity_range'],['Per Box Budget','per_box_budget'],['Estimated Value','estimated_value'],['Lead Status','status'],['Owner','assigned_name'],['Next Follow-up','next_followup_at'],['Follow-up Status','latest_followup_status'],['Follow-up Note','latest_followup_note'],['Notes','notes'],['Created At','created_at'],['Updated At','updated_at']],cell=value=>`"${String(value??'').replaceAll('"','""')}"`,csv='\uFEFF'+[columns.map(x=>cell(x[0])).join(','),...rows.map(row=>columns.map(([,key])=>cell(row[key])).join(','))].join('\r\n');res.setHeader('Content-Type','text/csv; charset=utf-8');res.setHeader('Content-Disposition',`attachment; filename="leads-${new Date().toISOString().slice(0,10)}.csv"`);res.send(csv);}));

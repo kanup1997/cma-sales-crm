@@ -19,6 +19,8 @@ export default function Dashboard(){
   const {user,can}=useAuth();
   const [data,setData]=useState({stats:{},schedule:[],team:[],analytics:{},recentOrders:[]});
   const [error,setError]=useState('');
+  const [users,setUsers]=useState([]);
+  const [owner,setOwner]=useState('');
   const [period,setPeriod]=useState('all');
   const [custom,setCustom]=useState({from:'',to:''});
   const today=useMemo(dayBounds,[]);
@@ -26,16 +28,18 @@ export default function Dashboard(){
   const scheduleSort=useSortedRows(data.schedule,'next_followup_at','asc');
   const periodLabel=period==='all'?'All time':period==='today'?'Today':period==='yesterday'?'Yesterday':period==='month'?'Current month':period==='custom'?'Custom range':`Last ${period} days`;
   const cohort={createdFrom:range.start,createdTo:range.end};
-  const cohortLeadUrl=filters=>leadUrl({...cohort,...filters});
+  const ownerScope=owner?{assignedTo:owner}:{};
+  const cohortLeadUrl=filters=>leadUrl({...cohort,...ownerScope,...filters});
   const teamUrl=(userId,filters)=>cohortLeadUrl({assignedTo:userId,...filters});
-  useEffect(()=>{const query=new URLSearchParams({start:today.start,end:today.end,leadStart:range.start,leadEnd:range.end,analyticsStart:range.start,analyticsEnd:range.end});api(`/dashboard?${query}`).then(setData).catch(error=>setError(error.message));},[today.start,today.end,range.start,range.end]);
+  useEffect(()=>{if(user.role==='ADMIN')api('/users?all=1').then(result=>setUsers(result.users||[])).catch(()=>{});},[user.role]);
+  useEffect(()=>{const query=new URLSearchParams({start:today.start,end:today.end,leadStart:range.start,leadEnd:range.end,analyticsStart:range.start,analyticsEnd:range.end});if(owner)query.set('userId',owner);api(`/dashboard?${query}`).then(setData).catch(error=>setError(error.message));},[today.start,today.end,range.start,range.end,owner]);
 
   const s=data.stats,a=data.analytics;
   return <>
     <div className="page-heading dashboard-heading"><div><span className="eyebrow">Sales workspace</span><h1>Good day, {user.name.split(' ')[0]}</h1><p>Start with new leads, complete today’s work, then clear overdue follow-ups.</p></div><Link to={cohortLeadUrl({pipeline:'active'})} className="btn btn-primary">Open active leads <ArrowRight size={16}/></Link></div>
     {error&&<div className="alert error">{error}</div>}
 
-    <section className="dashboard-lead-overview"><div className="dashboard-section-title"><div><span className="eyebrow">Lead command centre</span><h2>{user.role==='ADMIN'?'Team pipeline':'My pipeline'}</h2><p>Lead counts are for leads received in the selected period. Due and overdue remain today’s action queue.</p></div>{user.role==='ADMIN'&&<DashboardPeriod period={period} setPeriod={setPeriod} custom={custom} setCustom={setCustom} label={periodLabel}/>}</div>
+    <section className="dashboard-lead-overview"><div className="dashboard-section-title"><div><span className="eyebrow">Lead command centre</span><h2>{user.role==='ADMIN'?(owner?'Selected user pipeline':'Team pipeline'):'My pipeline'}</h2><p>Lead counts are for leads received in the selected period. Due and overdue remain today’s action queue.</p></div>{user.role==='ADMIN'&&<DashboardPeriod period={period} setPeriod={setPeriod} custom={custom} setCustom={setCustom} label={periodLabel} users={users} owner={owner} setOwner={setOwner}/>}</div>
       <div className="stats-grid dashboard-lead-stats">
         <Link className="stat-link" to={cohortLeadUrl({includeArchived:'1'})}><StatCard icon={Users} label={user.role==='ADMIN'?'Total Leads':'My Total Leads'} value={s.total||0} hint={`Received ${periodLabel.toLowerCase()}`}/></Link>
         <Link className="stat-link" to={cohortLeadUrl({pipeline:'active'})}><StatCard icon={UserRoundCheck} tone="blue" label="Active Leads" value={s.active||0} hint="Excludes won, lost & not interested"/></Link>
@@ -61,5 +65,5 @@ export default function Dashboard(){
   </>;
 }
 
-function DashboardPeriod({period,setPeriod,custom,setCustom,label}){const reset=()=>{setPeriod('all');setCustom({from:'',to:''});};return <div className="dashboard-period"><label>Lead period<select aria-label="Lead period" value={period} onChange={event=>setPeriod(event.target.value)}><option value="all">All time</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="month">Current month</option><option value="custom">Custom range</option></select></label>{period==='custom'&&<><label>From<input aria-label="From date" type="date" value={custom.from} max={custom.to||undefined} onClick={event=>event.currentTarget.showPicker?.()} onChange={event=>setCustom({...custom,from:event.target.value})}/></label><label>To<input aria-label="To date" type="date" value={custom.to} min={custom.from||undefined} onClick={event=>event.currentTarget.showPicker?.()} onChange={event=>setCustom({...custom,to:event.target.value})}/></label></>}<em>{label}</em>{period!=='all'&&<button type="button" className="dashboard-period-reset" title="Reset to all time" onClick={reset}><RotateCcw size={14}/>Reset</button>}</div>}
+function DashboardPeriod({period,setPeriod,custom,setCustom,label,users,owner,setOwner}){const reset=()=>{setPeriod('all');setCustom({from:'',to:''});setOwner('');};return <div className="dashboard-period"><label>Team member<select aria-label="Team member" value={owner} onChange={event=>setOwner(event.target.value)}><option value="">All team members</option>{users.filter(item=>item.active).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Lead period<select aria-label="Lead period" value={period} onChange={event=>setPeriod(event.target.value)}><option value="all">All time</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="month">Current month</option><option value="custom">Custom range</option></select></label>{period==='custom'&&<><label>From<input aria-label="From date" type="date" value={custom.from} max={custom.to||undefined} onClick={event=>event.currentTarget.showPicker?.()} onChange={event=>setCustom({...custom,from:event.target.value})}/></label><label>To<input aria-label="To date" type="date" value={custom.to} min={custom.from||undefined} onClick={event=>event.currentTarget.showPicker?.()} onChange={event=>setCustom({...custom,to:event.target.value})}/></label></>}<em>{label}</em>{(period!=='all'||owner)&&<button type="button" className="dashboard-period-reset" title="Reset dashboard filters" onClick={reset}><RotateCcw size={14}/>Reset</button>}</div>}
 function Metric({icon:Icon,label,value,hint,tone='',to}){return <Link to={to} className={`revenue-card ${tone}`}><span><Icon size={18}/></span><div><small>{label}</small><strong>{value}</strong><em>{hint}</em></div></Link>;}

@@ -16,6 +16,12 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(()=>{
+    const expired=()=>{localStorage.removeItem('cma_crm_token');setUser(null);};
+    window.addEventListener('auth:expired',expired);
+    return()=>window.removeEventListener('auth:expired',expired);
+  },[]);
+
   async function login(email, password) {
     const data = await api('/auth/login', {
       method: 'POST',
@@ -26,7 +32,8 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
-  function logout() {
+  async function logout() {
+    try{await api('/auth/logout',{method:'POST',silent:true});}catch{}
     localStorage.removeItem('cma_crm_token');
     setUser(null);
   }

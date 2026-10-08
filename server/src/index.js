@@ -17,6 +17,7 @@ import maintenanceRoutes from './routes/maintenance.js';
 
 import { startSheetScheduler } from './services/sheetSync.js';
 import { initDb } from './db.js';
+import { configurePushNotifications } from './services/pushNotifications.js';
 import {isDuplicatePhoneError,duplicatePhoneMessage} from './utils/leadPhone.js';
 import {requestTiming} from './utils/requestTiming.js';
 
@@ -59,6 +60,7 @@ app.use(
       'Content-Type',
       'Authorization'
     ],
+    credentials: true,
     maxAge: 600,
     exposedHeaders: ['Server-Timing']
   })
@@ -125,6 +127,7 @@ app.use((err, req, res, next) => {
 ----------------------------------- */
 
 await initDb();
+await configurePushNotifications();
 
 /* ----------------------------------
    Server

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { queryOne } from '../db.js';
+import {sessionIsActive} from '../services/sessions.js';
 
 export async function authRequired(req, res, next) {
   const header = req.headers.authorization || '';
@@ -9,6 +10,7 @@ export async function authRequired(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret-change-me');
+    if(!await sessionIsActive(payload.sid,payload.id))return res.status(401).json({ message: 'Your session has ended. Please log in again.' });
     const user = await queryOne(
       `SELECT u.id,u.name,u.email,u.role,u.active,u.phone,u.designation,u.city,u.bio,u.created_at,
        (SELECT group_concat(permission) FROM user_permissions WHERE user_id=u.id) AS permissions_csv

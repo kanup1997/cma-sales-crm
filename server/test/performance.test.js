@@ -12,13 +12,14 @@ const response=()=>({statusCode:200,status(code){this.statusCode=code;return thi
 
 test('auth fetches user and permissions once, with no cross-request permission cache',async()=>{
   let queries=0,allowed='PAGE_LEADS',active=1;
-  globalThis.performanceTest={jwt:{verify:()=>({id:7})},queryOne:async(sql,args)=>{
+  globalThis.performanceTest={jwt:{verify:()=>({id:7,sid:'test-session'})},sessionIsActive:async()=>true,queryOne:async(sql,args)=>{
     queries++;assert.ok(sql.includes('group_concat(permission)'));assert.deepEqual(args,[7]);
     return{id:7,role:'SALES',active,permissions_csv:allowed};
   }};
   const {authRequired}=await load('../src/middleware/auth.js',[
     ["import jwt from 'jsonwebtoken';",'const {jwt}=globalThis.performanceTest;'],
-    ["import { queryOne } from '../db.js';",'const {queryOne}=globalThis.performanceTest;']
+    ["import { queryOne } from '../db.js';",'const {queryOne}=globalThis.performanceTest;'],
+    ["import {sessionIsActive} from '../services/sessions.js';",'const {sessionIsActive}=globalThis.performanceTest;']
   ]);
   const req={headers:{authorization:'Bearer test'}};let next=0;
   await authRequired(req,response(),error=>{assert.ifError(error);next++;});

@@ -39,7 +39,7 @@ export default function LeadDetail(){
 
   if(!lead)return <div className="panel">{error||'Loading lead...'}</div>;
   return <>
-    <div className="page-heading"><div><Link to={returnTo} className="back-link">← Back to leads</Link><h1>{lead.contact_name}</h1><p>{lead.company_name||'Individual lead'} · {lead.city||'Location not added'}</p></div><LeadActions phone={lead.phone}/></div>
+    <div className="page-heading lead-detail-heading"><div className="lead-detail-title"><Link to={returnTo} className="back-link">← Back to leads</Link><h1>{lead.contact_name}</h1><p>{lead.company_name||'Individual lead'} · {lead.city||'Location not added'}</p></div><LeadActions phone={lead.phone}/></div>
     {error&&<div className="alert error">{error}</div>}
     <div className="detail-grid">
       <section className={`panel ${editing?'inline-editing':''}`}><div className="panel-head"><h2>Lead Details</h2><div className="inline-actions">{editing?<><button className="btn btn-primary btn-sm" disabled={saving} onClick={saveDetails}><Save size={13}/>{saving?'Saving...':'Save'}</button><button className="btn btn-ghost btn-sm" onClick={cancelEdit}><X size={13}/>Cancel</button></>:<button className="edit-detail-btn" onClick={()=>setEditing(true)}><Pencil size={13}/> Edit</button>}</div></div>

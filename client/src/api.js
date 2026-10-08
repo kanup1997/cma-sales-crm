@@ -1,5 +1,16 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
 const pendingReads = new Map();
+let refreshRequest=null;
+
+async function refreshAccessToken(){
+  if(refreshRequest)return refreshRequest;
+  refreshRequest=fetch(`${API_BASE}/auth/refresh`,{method:'POST',credentials:'include'})
+    .then(async response=>{const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||'Session expired');localStorage.setItem('cma_crm_token',data.token);return data;})
+    .finally(()=>{refreshRequest=null;});
+  return refreshRequest;
+}
+
+const shouldTryRefresh=path=>!['/auth/login','/auth/refresh','/auth/logout'].includes(path);
 
 export function api(path, options = {}) {
   const token = localStorage.getItem('cma_crm_token');
@@ -18,18 +29,22 @@ export function api(path, options = {}) {
   return request;
 }
 
-async function sendRequest(path, options, token, method) {
+async function sendRequest(path, options, token, method, retried=false) {
   window.dispatchEvent(new Event('api:start'));
   const headers = new Headers(options.headers);
   if (options.body != null && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type','application/json');
   if (token) headers.set('Authorization',`Bearer ${token}`);
 
   let response;
-  try { response = await fetch(`${API_BASE}${path}`, { ...options, headers }); }
+  try { response = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials:'include' }); }
   catch(error){ window.dispatchEvent(new Event('api:end')); throw error; }
   let data = {};
   try { data = await response.json(); } catch { data = {}; }
   window.dispatchEvent(new Event('api:end'));
+  if(response.status===401&&!retried&&shouldTryRefresh(path)){
+    try{await refreshAccessToken();return sendRequest(path,options,localStorage.getItem('cma_crm_token'),method,true);}
+    catch{localStorage.removeItem('cma_crm_token');window.dispatchEvent(new Event('auth:expired'));}
+  }
   if (method !== 'GET') pendingReads.clear();
   if (!response.ok) throw new Error(data.message || 'Request failed');
   if (method !== 'GET' && path !== '/auth/login' && !options.silent) {

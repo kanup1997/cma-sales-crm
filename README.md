@@ -17,6 +17,8 @@ A responsive full-stack sales CRM designed around ChocoManualART's daily corpora
 - Exact next follow-up date and time
 - Mobile `tel:` Call button
 - WhatsApp button
+- Persistent secure login: users stay signed in across browser restarts and active sessions renew automatically
+- Instant assigned-lead alerts on desktop and mobile browsers (including background/browser-closed push alerts after enabling permission)
 - Follow-up notes and chronological history
 - Lead statuses and opportunity value
 - Dashboard with today schedule
@@ -86,6 +88,24 @@ npm run dev
 - Password: `Sales@123`
 
 **Change these passwords before production deployment.**
+
+## Lead notification setup
+
+After signing in on each desktop or mobile device, click **Enable alerts** in the top bar and allow the browser notification permission. That device will then receive an immediate notification whenever a lead is assigned to its signed-in user; tapping it opens the relevant lead.
+
+For background notifications, the deployed CRM must use **HTTPS** (localhost is allowed for development). On iPhone, open the CRM in Safari, use **Add to Home Screen**, then enable alerts from the installed app. Android Chrome and desktop Chrome/Edge can enable alerts directly in the browser.
+
+The server creates and safely stores VAPID keys automatically on first start. For a multi-server production deployment, configure the same keys on every server instead:
+
+```env
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:admin@your-company.com
+```
+
+If the frontend and API are hosted on different sites, also set `AUTH_COOKIE_SAME_SITE=none` on the API (HTTPS is then required). For a same-site deployment, the secure default is already used.
+
+Login sessions use an 8-hour access token plus a secure rotating refresh session. A signed-in, active user remains logged in while using the CRM; explicit logout, user deactivation, or a password change ends access.
 
 ## Excel import columns
 
