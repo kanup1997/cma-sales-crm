@@ -11,10 +11,16 @@ function supported(){return 'serviceWorker' in navigator&&'PushManager' in windo
 
 async function saveSubscription(subscription){await api('/notifications/push/subscribe',{method:'POST',body:JSON.stringify(subscription),silent:true});}
 
+async function notificationRegistration(){
+  const registration=await navigator.serviceWorker.register('/sw.js',{scope:'/',updateViaCache:'none'});
+  // Do not leave an old service worker active after a new deployment.
+  await registration.update().catch(()=>{});
+  return navigator.serviceWorker.ready;
+}
+
 export async function syncPushSubscription(){
   if(!supported())return {state:'unsupported'};
-  await navigator.serviceWorker.register('/sw.js');
-  const registration=await navigator.serviceWorker.ready;
+  const registration=await notificationRegistration();
   const subscription=await registration.pushManager.getSubscription();
   if(subscription){await saveSubscription(subscription.toJSON());return {state:'enabled'};}
   return {state:Notification.permission==='denied'?'blocked':'ready'};
@@ -22,8 +28,7 @@ export async function syncPushSubscription(){
 
 export async function enablePushNotifications(){
   if(!supported())return {state:'unsupported'};
-  await navigator.serviceWorker.register('/sw.js');
-  const registration=await navigator.serviceWorker.ready;
+  const registration=await notificationRegistration();
   let permission=Notification.permission;
   if(permission==='default')permission=await Notification.requestPermission();
   if(permission!=='granted')return {state:'blocked'};
@@ -34,4 +39,8 @@ export async function enablePushNotifications(){
   }
   await saveSubscription(subscription.toJSON());
   return {state:'enabled'};
+}
+
+export async function sendPushTest(){
+  return api('/notifications/push/test',{method:'POST',silent:true});
 }

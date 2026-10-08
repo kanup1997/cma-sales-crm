@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 import express from 'express';
 import cors from 'cors';
+import {createServer} from 'node:http';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -18,10 +19,12 @@ import maintenanceRoutes from './routes/maintenance.js';
 import { startSheetScheduler } from './services/sheetSync.js';
 import { initDb } from './db.js';
 import { configurePushNotifications } from './services/pushNotifications.js';
+import { startRealtime } from './services/realtime.js';
 import {isDuplicatePhoneError,duplicatePhoneMessage} from './utils/leadPhone.js';
 import {requestTiming} from './utils/requestTiming.js';
 
 const app = express();
+const httpServer=createServer(app);
 const port = Number(process.env.PORT || 4000);
 
 /* ----------------------------------
@@ -128,12 +131,13 @@ app.use((err, req, res, next) => {
 
 await initDb();
 await configurePushNotifications();
+startRealtime(httpServer,allowedOrigins);
 
 /* ----------------------------------
    Server
 ----------------------------------- */
 
-app.listen(
+httpServer.listen(
   port,
   '0.0.0.0',
   () => {

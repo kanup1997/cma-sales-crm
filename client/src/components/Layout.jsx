@@ -3,7 +3,8 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Users, Upload, UserCog, CalendarClock, LogOut, Menu, X, Bell, RefreshCw, PanelLeftClose, PanelLeftOpen, ChartNoAxesCombined, CircleUserRound, ReceiptIndianRupee, Database, PlugZap, Trash2, UserX, ClipboardList } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api';
-import {enablePushNotifications,syncPushSubscription} from '../notifications';
+import {enablePushNotifications,sendPushTest,syncPushSubscription} from '../notifications';
+import {openNotificationSocket} from '../realtime';
 
 const navClass = ({ isActive }) => `nav-item ${isActive ? 'active' : ''}`;
 
@@ -13,7 +14,7 @@ export default function Layout() {
   const [open, setOpen] = useState(false);
   const [noticeOpen,setNoticeOpen]=useState(false);const [notifications,setNotifications]=useState([]);const [unreadCount,setUnreadCount]=useState(0);
   const [fetchingLeads,setFetchingLeads]=useState(false);const [fetchError,setFetchError]=useState('');
-  const [pushState,setPushState]=useState('checking');const [enablingPush,setEnablingPush]=useState(false);
+  const [pushState,setPushState]=useState('checking');const [enablingPush,setEnablingPush]=useState(false);const [testingPush,setTestingPush]=useState(false);
   const notificationRequest=useRef(null);
   const knownNotificationIds=useRef(new Set());const notificationsPrimedFor=useRef(null);const notificationBaselineReady=useRef(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
@@ -28,11 +29,28 @@ export default function Layout() {
       knownNotificationIds.current=new Set(next.map(item=>item.id));
       notificationBaselineReady.current=true;
       setNotifications(next);setUnreadCount(data.unreadCount||0);
-      if(incoming)window.dispatchEvent(new CustomEvent('app:success',{detail:{message:`New lead assigned: ${incoming.contact_name||'Open notifications to view it.'}`}}));
+      if(incoming){
+        const leadSummary=[incoming.contact_name,incoming.phone].filter(Boolean).join(' · ');
+        window.dispatchEvent(new CustomEvent('app:success',{detail:{message:`New lead assigned: ${leadSummary||'Open notifications to view it.'}`}}));
+      }
     }).finally(()=>{notificationRequest.current=null;});
     return notificationRequest.current;
   }
-  useEffect(()=>{const refresh=()=>{loadNotifications().catch(()=>{});};refresh();const timer=setInterval(refresh,15*1000);window.addEventListener('lead-notifications:refresh',refresh);return()=>{clearInterval(timer);window.removeEventListener('lead-notifications:refresh',refresh);};},[user.id]);
+  useEffect(()=>{
+    const refresh=()=>{loadNotifications().catch(()=>{});};
+    refresh();
+    window.addEventListener('lead-notifications:refresh',refresh);
+    const socket=openNotificationSocket(notification=>{
+      if(!notification?.id||knownNotificationIds.current.has(notification.id))return;
+      knownNotificationIds.current.add(notification.id);
+      notificationBaselineReady.current=true;
+      setNotifications(items=>[notification,...items.filter(item=>Number(item.id)!==Number(notification.id))].slice(0,40));
+      if(!notification.read_at)setUnreadCount(count=>count+1);
+      const leadSummary=[notification.contact_name,notification.phone].filter(Boolean).join(' · ');
+      window.dispatchEvent(new CustomEvent('app:success',{detail:{message:`New lead assigned: ${leadSummary||'Open notifications to view it.'}`}}));
+    });
+    return()=>{window.removeEventListener('lead-notifications:refresh',refresh);socket.disconnect();};
+  },[user.id]);
   useEffect(()=>{
     let active=true;
     syncPushSubscription().then(result=>{if(active)setPushState(result.state);}).catch(()=>{if(active)setPushState('unavailable');});
@@ -63,9 +81,15 @@ export default function Layout() {
   async function markAllRead(){await api('/notifications/read-all',{method:'POST',silent:true});setUnreadCount(0);setNotifications(value=>value.map(item=>({...item,read_at:item.read_at||new Date().toISOString()})));}
   async function enableDeviceNotifications(){
     setEnablingPush(true);
-    try{const result=await enablePushNotifications();setPushState(result.state);if(result.state==='enabled')window.dispatchEvent(new CustomEvent('app:success',{detail:{message:'This device will now receive lead notifications.'}}));else if(result.state==='blocked')setFetchError('Notifications are blocked in this browser. Allow them in browser settings, then try again.');}
+    try{const result=await enablePushNotifications();setPushState(result.state);if(result.state==='enabled'){await sendPushTest();window.dispatchEvent(new CustomEvent('app:success',{detail:{message:'Alerts enabled. A test notification was sent to this device.'}}));}else if(result.state==='blocked')setFetchError('Notifications are blocked in this browser. Allow them in browser settings, then try again.');}
     catch(error){setFetchError(error.message||'Unable to enable notifications on this device.');}
     finally{setEnablingPush(false);}
+  }
+  async function testDeviceNotifications(){
+    setTestingPush(true);setFetchError('');
+    try{await sendPushTest();window.dispatchEvent(new CustomEvent('app:success',{detail:{message:'Test notification sent to this device.'}}));}
+    catch(error){setFetchError(error.message||'Unable to send a test notification.');}
+    finally{setTestingPush(false);}
   }
 
   const close = () => setOpen(false);
@@ -113,9 +137,9 @@ export default function Layout() {
           </div>
           <div className="topbar-actions">
             {can('PAGE_LEADS')&&<button type="button" className="btn btn-ghost btn-sm fetch-leads-btn" disabled={fetchingLeads} onClick={fetchLeads} title="Fetch latest leads and notifications"><RefreshCw size={14} className={fetchingLeads?'spin':''}/>{fetchingLeads?'Fetching...':'Fetch Lead'}</button>}
-            {pushState!=='enabled'&&<button type="button" className="btn btn-ghost btn-sm enable-alerts-btn" disabled={enablingPush||pushState==='unsupported'||pushState==='unavailable'} onClick={enableDeviceNotifications} title={pushState==='blocked'?'Allow notifications in browser settings, then try again.':'Enable lead alerts on this device'}>{enablingPush?'Enabling...':pushState==='blocked'?'Alerts blocked':'Enable alerts'}</button>}
+            {pushState!=='enabled'?<button type="button" className="btn btn-ghost btn-sm enable-alerts-btn" disabled={enablingPush||pushState==='unsupported'||pushState==='unavailable'} onClick={enableDeviceNotifications} title={pushState==='blocked'?'Allow notifications in browser settings, then try again.':'Enable lead alerts on this device'}>{enablingPush?'Enabling...':pushState==='blocked'?'Alerts blocked':'Enable alerts'}</button>:<button type="button" className="btn btn-ghost btn-sm enable-alerts-btn" disabled={testingPush} onClick={testDeviceNotifications} title="Send a test system notification to this device">{testingPush?'Sending...':'Test alert'}</button>}
             <button className="topbar-icon" aria-label="Notifications" aria-expanded={noticeOpen} onClick={()=>setNoticeOpen(value=>!value)}><Bell size={18}/>{unreadCount>0&&<b>{unreadCount>99?'99+':unreadCount}</b>}</button>
-            {noticeOpen&&<section className="notification-popover"><header><div><strong>Notifications</strong><span>{unreadCount} new assigned lead{unreadCount===1?'':'s'}</span></div>{unreadCount>0&&<button onClick={markAllRead}>Mark all read</button>}</header>{unreadCount>0&&can('PAGE_LEADS')&&<button className="notification-summary" onClick={()=>navigate('/leads?newAssigned=1')}><Bell size={15}/><span><strong>View new assigned leads</strong><small>Open all {unreadCount} unread lead{unreadCount===1?'':'s'}</small></span></button>}<div className="notification-list">{notifications.length?notifications.map(item=><button key={item.id} className={item.read_at?'':'unread'} onClick={()=>openLeadNotification(item)}><i>{String(item.contact_name||'L').slice(0,1).toUpperCase()}</i><span><strong>{item.contact_name}</strong><small>{item.company_name||item.source||'New lead'} · {new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(new Date(item.created_at.endsWith?.('Z')?item.created_at:`${item.created_at}Z`))}</small></span></button>):<p>No lead notifications yet.</p>}</div></section>}
+            {noticeOpen&&<section className="notification-popover"><header><div><strong>Notifications</strong><span>{unreadCount} new assigned lead{unreadCount===1?'':'s'}</span></div>{unreadCount>0&&<button onClick={markAllRead}>Mark all read</button>}</header>{unreadCount>0&&can('PAGE_LEADS')&&<button className="notification-summary" onClick={()=>navigate('/leads?newAssigned=1')}><Bell size={15}/><span><strong>View new assigned leads</strong><small>Open all {unreadCount} unread lead{unreadCount===1?'':'s'}</small></span></button>}<div className="notification-list">{notifications.length?notifications.map(item=><button key={item.id} className={item.read_at?'':'unread'} onClick={()=>openLeadNotification(item)}><i>{String(item.contact_name||'L').slice(0,1).toUpperCase()}</i><span><strong>{item.contact_name}</strong><small>{[item.phone,item.company_name||item.source||'New lead'].filter(Boolean).join(' · ')} · {new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(new Date(item.created_at.endsWith?.('Z')?item.created_at:`${item.created_at}Z`))}</small></span></button>):<p>No lead notifications yet.</p>}</div></section>}
             <div className="user-avatar">{user.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</div>
           </div>
         </header>

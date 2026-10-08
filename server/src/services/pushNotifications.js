@@ -23,22 +23,32 @@ export async function configurePushNotifications(){
 
 export function pushPublicKey(){return configuration?.publicKey||null;}
 
-export async function sendLeadAssignmentPush({userId,leadId,contactName,companyName}){
+async function deliverPush(userId,payload){
   if(!configuration)return;
   const subscriptions=await queryAll('SELECT id,endpoint,p256dh,auth FROM push_subscriptions WHERE user_id=?',[Number(userId)]);
-  if(!subscriptions.length)return;
-  const title='New lead assigned';
-  const customer=contactName||'New customer';
-  const body=companyName?`${customer} · ${companyName}`:customer;
-  const payload=JSON.stringify({type:'lead-assigned',leadId:Number(leadId),title,body,url:`/leads/${Number(leadId)}`,tag:`lead-assigned-${Number(leadId)}`});
+  if(!subscriptions.length)return {subscriptions:0,delivered:0,failed:0};
+  let delivered=0,failed=0;
   await Promise.all(subscriptions.map(async subscription=>{
     try{
       await webpush.sendNotification({endpoint:subscription.endpoint,keys:{p256dh:subscription.p256dh,auth:subscription.auth}},payload,{TTL:60*60,urgency:'high'});
       await run("UPDATE push_subscriptions SET last_seen_at=datetime('now') WHERE id=?",[subscription.id]);
+      delivered++;
     }catch(error){
       const status=Number(error?.statusCode);
       if(status===404||status===410)await run('DELETE FROM push_subscriptions WHERE id=?',[subscription.id]);
-      else console.error('Push delivery failed:',error?.message||error);
+      else{failed++;console.error('Push delivery failed:',error?.message||error);}
     }
   }));
+  return {subscriptions:subscriptions.length,delivered,failed};
+}
+
+export async function sendLeadAssignmentPush({userId,leadId,contactName,companyName,phone}){
+  const title='New lead assigned';
+  const customer=contactName||'New customer';
+  const body=[customer,phone||companyName].filter(Boolean).join(' · ');
+  return deliverPush(userId,JSON.stringify({type:'lead-assigned',leadId:Number(leadId),title,body,url:`/leads/${Number(leadId)}`,tag:`lead-assigned-${Number(leadId)}`}));
+}
+
+export async function sendPushTest(userId){
+  return deliverPush(userId,JSON.stringify({type:'push-test',title:'CMA Sales CRM alerts are on',body:'Test Lead · 9876543210',url:'/',tag:`push-test-${Date.now()}`}));
 }
